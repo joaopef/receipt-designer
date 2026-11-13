@@ -139,18 +139,9 @@ def save_template(mw: PersistenceHost) -> None:
         elements = _collect_elements(mw)
         elements = make_elements_portable(elements, path)
 
-        t = Template(
-            width_mm=mw.template.width_mm,
-            height_mm=mw.template.height_mm,
-            dpi=mw.template.dpi,
-            margins_mm=mw.template.margins_mm,
-            elements=[Element.from_dict(e) for e in elements],
-            guides=mw.template.guides,
-            grid=mw.template.grid,
-            name=mw.template.name,
-            version=mw.template.version,
-            variable_manager=mw.template.variable_manager,
-        )
+        import copy
+        t = copy.deepcopy(mw.template)
+        t.elements = [Element.from_dict(e) for e in elements]
     except Exception as e:
         QtWidgets.QMessageBox.critical(
             mw,
@@ -191,227 +182,36 @@ def save_template(mw: PersistenceHost) -> None:
         )
         return
 
-    # Success - update state
-    mw.statusBar().showMessage(f"Saved: {path}", 3000)
+    mw.statusBar().showMessage(f"Exportado: {path}", 3000)
     update_recent_files(mw, path)
-    mw._current_file_path = path
-    mw._has_unsaved_changes = False
-
-    # Delete autosave file after successful manual save
-    delete_autosave_file(mw)
 
 
 def load_template(mw: PersistenceHost) -> None:
-    """Load template from file with improved error handling."""
-    path, _ = QtWidgets.QFileDialog.getOpenFileName(
-        mw, "Load Template", "", "Template JSON (*.json)"
-    )
-    if not path:
-        return
-
-    # Read file
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "File Not Found",
-            f"The file could not be found:\n{path}"
-        )
-        remove_from_recent_by_normalized(mw, path)
-        return
-    except PermissionError:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Permission Denied",
-            f"You don't have permission to read this file:\n{path}\n\n"
-            "Try closing other programs that might be using it."
-        )
-        return
-    except json.JSONDecodeError as e:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Invalid Template File",
-            f"The file is not a valid JSON template:\n{path}\n\n"
-            f"Error at line {e.lineno}, column {e.colno}:\n{e.msg}"
-        )
-        return
-    except UnicodeDecodeError:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Invalid File Encoding",
-            f"The file encoding is not supported:\n{path}\n\n"
-            "Template files must be saved as UTF-8."
-        )
-        return
-    except Exception as e:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Load Error",
-            f"An unexpected error occurred while loading:\n{path}\n\n"
-            f"Error: {type(e).__name__}: {e}"
-        )
-        return
-
-    # Resolve relative asset paths
-    if "elements" in data and isinstance(data["elements"], list):
-        data["elements"] = resolve_element_paths(data["elements"], path)
-
-    # Remove autosave metadata key if present
-    data.pop("_autosave_original_path", None)
-
-    # Parse template
-    try:
-        mw.template = Template.from_dict(data)
-    except KeyError as e:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Invalid Template Data",
-            f"The template file is missing required field:\n{e}\n\n"
-            "This file may be corrupted or from an incompatible version."
-        )
-        return
-    except (ValueError, TypeError) as e:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Invalid Template Data",
-            f"The template file contains invalid data:\n\n{e}"
-        )
-        return
-    except Exception as e:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Template Parse Error",
-            f"Could not parse template data:\n\n"
-            f"Error: {type(e).__name__}: {e}"
-        )
-        return
-
-    # Build scene
-    try:
-        _build_scene_from_template(mw)
-        mw._current_file_path = path
-        update_recent_files(mw, path)
-        mw._has_unsaved_changes = False
-        mw.undo_stack.clear()
-        mw._clear_column_guides()
-        mw.statusBar().showMessage(f"Loaded: {path}", 3000)
-
-    except Exception as e:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Scene Build Error",
-            f"Error building scene from template:\n\n"
-            f"Error: {type(e).__name__}: {e}\n\n"
-            "The template may be partially loaded."
-        )
+    """Import a JSON document into the editor, retaining library identity safety."""
+    path, _ = QtWidgets.QFileDialog.getOpenFileName(mw, "Importar modelo", "", "Modelos (*.json *.receipt)")
+    if path:
+        load_template_path(mw, path)
 
 
 def load_template_path(mw: PersistenceHost, path: str) -> None:
-    """Load template from a specific file path with improved error handling."""
-    # Validate file exists
-    if not os.path.exists(path):
-        reply = QtWidgets.QMessageBox.question(
-            mw,
-            "File Not Found",
-            f"The file no longer exists:\n{path}\n\n"
-            "Remove it from recent files?",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
-        )
-        if reply == QtWidgets.QMessageBox.Yes:
-            remove_from_recent_by_normalized(mw, path)
+    from . import library_page
+    if not library_page.guard(mw):
         return
-
-    # Read file
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except PermissionError:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Permission Denied",
-            f"You don't have permission to read this file:\n{path}\n\n"
-            "Try closing other programs that might be using it."
-        )
-        return
-    except json.JSONDecodeError as e:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Invalid Template File",
-            f"The file is not a valid JSON template:\n{path}\n\n"
-            f"Error at line {e.lineno}, column {e.colno}:\n{e.msg}"
-        )
-        return
-    except UnicodeDecodeError:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Invalid File Encoding",
-            f"The file encoding is not supported:\n{path}\n\n"
-            "Template files must be saved as UTF-8."
-        )
-        return
-    except Exception as e:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Load Error",
-            f"An unexpected error occurred while loading:\n{path}\n\n"
-            f"Error: {type(e).__name__}: {e}"
-        )
-        return
-
-    # Resolve relative asset paths
-    if "elements" in data and isinstance(data["elements"], list):
-        data["elements"] = resolve_element_paths(data["elements"], path)
-
-    # Remove autosave metadata key if present
-    data.pop("_autosave_original_path", None)
-
-    # Parse template
-    try:
-        mw.template = Template.from_dict(data)
-    except KeyError as e:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Invalid Template Data",
-            f"The template file is missing required field:\n{e}\n\n"
-            "This file may be corrupted or from an incompatible version."
-        )
-        return
-    except (ValueError, TypeError) as e:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Invalid Template Data",
-            f"The template file contains invalid data:\n\n{e}"
-        )
-        return
-    except Exception as e:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Template Parse Error",
-            f"Could not parse template data:\n\n"
-            f"Error: {type(e).__name__}: {e}"
-        )
-        return
-
-    # Build scene
-    try:
-        _build_scene_from_template(mw)
-        mw._current_file_path = path
+        with open(path, "r", encoding="utf-8") as stream:
+            data = json.load(stream)
+        if isinstance(data.get("elements"), list):
+            data["elements"] = resolve_element_paths(data["elements"], path)
+        data.pop("_autosave_original_path", None)
+        data.pop("_autosave_layout_id", None)
+        template = Template.from_dict(data)
+        library_page.install_template(mw, template, path=path)
+        # Imported files become a new library document on Save.
+        mw._has_unsaved_changes = True
         update_recent_files(mw, path)
-        mw._has_unsaved_changes = False
-        mw.undo_stack.clear()
-        mw._clear_column_guides()
-        mw.statusBar().showMessage(f"Loaded: {os.path.basename(path)}", 3000)
-
-    except Exception as e:
-        QtWidgets.QMessageBox.critical(
-            mw,
-            "Scene Build Error",
-            f"Error building scene from template:\n\n"
-            f"Error: {type(e).__name__}: {e}\n\n"
-            "The template may be partially loaded."
-        )
+        mw.statusBar().showMessage(f"Importado: {path}", 3000)
+    except Exception as exc:
+        QtWidgets.QMessageBox.critical(mw, "Não foi possível importar", str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +220,11 @@ def load_template_path(mw: PersistenceHost, path: str) -> None:
 
 def mark_unsaved(mw: PersistenceHost) -> None:
     """Mark that changes have been made (called when scene changes)."""
-    mw._has_unsaved_changes = True
+    if hasattr(mw, "_clean_document_signature"):
+        from .library_page import signature
+        mw._has_unsaved_changes = signature(mw) != mw._clean_document_signature
+    else:
+        mw._has_unsaved_changes = True
 
 
 def auto_save(mw: PersistenceHost) -> None:
@@ -454,18 +258,9 @@ def auto_save(mw: PersistenceHost) -> None:
         if mw._current_file_path:
             elements = make_elements_portable(elements, mw._current_file_path)
 
-        t = Template(
-            width_mm=mw.template.width_mm,
-            height_mm=mw.template.height_mm,
-            dpi=mw.template.dpi,
-            margins_mm=mw.template.margins_mm,
-            elements=[Element.from_dict(e) for e in elements],
-            guides=mw.template.guides,
-            grid=mw.template.grid,
-            name=mw.template.name,
-            version=mw.template.version,
-            variable_manager=mw.template.variable_manager,
-        )
+        import copy
+        t = copy.deepcopy(mw.template)
+        t.elements = [Element.from_dict(e) for e in elements]
     except (KeyError, ValueError, TypeError, AttributeError) as e:
         print(f"Auto-save serialization failed: {type(e).__name__}: {e}")
         return
@@ -479,6 +274,9 @@ def auto_save(mw: PersistenceHost) -> None:
         autosave_data = t.to_dict()
         if mw._current_file_path:
             autosave_data["_autosave_original_path"] = mw._current_file_path
+        if getattr(mw, "current_layout_id", None):
+            autosave_data["_autosave_layout_id"] = mw.current_layout_id
+            autosave_data["_autosave_library_root"] = str(mw.library.root)
 
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(autosave_data, f, indent=2)
@@ -564,9 +362,18 @@ def load_crash_recovery(mw: PersistenceHost) -> None:
                 data["elements"] = resolve_element_paths(data["elements"], original_path)
                 mw._current_file_path = original_path
 
-            mw.template = Template.from_dict(data)
-
-            _build_scene_from_template(mw)
+            layout_id = data.pop("_autosave_layout_id", None)
+            library_root = data.pop("_autosave_library_root", None)
+            if library_root != str(mw.library.root):
+                layout_id = None
+            if layout_id:
+                try:
+                    mw.library.load(layout_id)
+                except (FileNotFoundError, ValueError):
+                    layout_id = None
+            from . import library_page
+            library_page.install_template(mw, Template.from_dict(data), layout_id=layout_id, path=original_path)
+            mw._has_unsaved_changes = True
             mw.statusBar().showMessage("Auto-saved work restored", 3000)
             recovery_succeeded = True
 

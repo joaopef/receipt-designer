@@ -45,6 +45,7 @@ from .dialogs import (
 from . import persistence as _persist
 from . import presets as _presets
 from . import layout_ops as _layout
+from . import library_page as _library
 
 
 # -------------------------
@@ -66,12 +67,12 @@ QtCore.QCoreApplication.setApplicationName(APP_NAME)
 QtCore.QCoreApplication.setApplicationVersion(APP_VERSION)
 
 class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self):
+    def __init__(self, *, settings=None, library_root=None):
         super().__init__()
 
         self.setWindowTitle(f"{APP_NAME} — {APP_VERSION}")
         self.resize(1300, 900)
-        self.settings = QtCore.QSettings()
+        self.settings = settings if settings is not None else QtCore.QSettings()
 
         self.template = Template()
         self._load_printer_profiles()
@@ -81,6 +82,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.undo_stack.indexChanged.connect(self._on_undo_redo_changed)
         self._workers: set[PrinterWorker] = set()
         self._column_guides: list[GuideLineItem] = []
+        self._cut_guides = []
         self._alignment_guides: list[QtWidgets.QGraphicsLineItem] = []
         self._alignment_guide_pen = QtGui.QPen(QtGui.QColor(255, 0, 255), 1, QtCore.Qt.DashLine)
         self._last_duplicate_offset = QtCore.QPointF(10, 10)  # Default 10px offset
@@ -104,9 +106,67 @@ class MainWindow(QtWidgets.QMainWindow):
         self.scene.column_guide_positions = []
 
         self.update_paper()
+        _library.initialize(self, library_root)
         self._load_crash_recovery()
         self.apply_theme()
         self.statusBar().showMessage("Ready. Loaded saved printer settings.")
+
+    def _snapshot_template(self):
+        return _library.snapshot(self)
+
+    def save_layout(self):
+        return _library.save(self)
+
+    def new_layout(self, name=None):
+        return _library.new(self, name)
+
+    def open_layout(self, layout_id):
+        return _library.open_layout(self, layout_id)
+
+    def show_library(self):
+        return _library.show_library(self)
+
+    def duplicate_layout(self, layout_id, name=None):
+        return _library.library_operation(self, "duplicate", layout_id, name)
+
+    def rename_layout(self, layout_id, name=None):
+        return _library.library_operation(self, "rename", layout_id, name)
+
+    def trash_layout(self, layout_id):
+        return _library.library_operation(self, "trash", layout_id)
+
+    def restore_layout(self, layout_id):
+        return _library.library_operation(self, "restore", layout_id)
+
+    def choose_library_root(self):
+        return _library.choose_root(self)
+
+    def export_template(self):
+        return _persist.save_template(self)
+
+    def edit_cut_markers(self):
+        from .dialogs.cut_markers import CutMarkersDialog, SetCutMarkersCommand
+        dialog = CutMarkersDialog(self.template.cut_markers, self.template.height_mm, self)
+        if dialog.exec() == QtWidgets.QDialog.Accepted:
+            self.undo_stack.push(SetCutMarkersCommand(self, dialog.markers()))
+
+    def _update_cut_guides(self):
+        for guide in self._cut_guides:
+            if guide.scene() is self.scene:
+                self.scene.removeItem(guide)
+        self._cut_guides = []
+        pen = QtGui.QPen(QtGui.QColor("#1b8c9e"), 1, QtCore.Qt.DashLine)
+        pen.setCosmetic(True)
+        for marker in getattr(self.template, "cut_markers", []):
+            y = marker.position_mm * self.template.px_per_mm
+            from .dialogs.cut_markers import CutGuideItem
+            guide = CutGuideItem(0, y, self.template.width_px, y)
+            guide.setPen(pen)
+            self.scene.addItem(guide)
+            guide.setZValue(10000)
+            guide.setToolTip(f"Corte {marker.position_mm:g} mm ({marker.mode}) — guia, sem tinta")
+            self._cut_guides.append(guide)
+        self.view.viewport().update()
 
     # -------------------------
     # UI construction
@@ -598,103 +658,38 @@ class MainWindow(QtWidgets.QMainWindow):
     # -------------------------
     # Printing & export
     # -------------------------
+    def _prepare_print_job(self):
+        from .print_render import prepare_print_job
+        from ..printing.jobs import ThermalProfile
+        return prepare_print_job(self._snapshot_template(), ThermalProfile.from_config(self.printer_cfg))
+
     def print_now(self):
-        """
-        Render the current scene to a QImage and send it to the printer worker.
-        """
-        # Check for missing variables (non-blocking warning)
         self._warn_missing_variables()
-
-        # ========== Patch 9: Render with error handling ==========
         try:
-            img = scene_to_image(self.scene, scale=1.0)
-        except Exception as e:
-            QtWidgets.QMessageBox.critical(
-                self,
-                "Render Error",
-                f"Could not render the scene to an image:\n\n"
-                f"Error: {type(e).__name__}: {e}"
-            )
-            if DEBUG_PRINTING:
-                print(f"[PRINT DEBUG] Render exception: {e}")
+            job = self._prepare_print_job()
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Erro de impressão", str(exc))
             return
+        self._submit_print_job(job)
 
-        if img is None or img.isNull():
-            QtWidgets.QMessageBox.warning(
-                self, "Print Error", "Could not render the scene to an image."
-            )
-            if DEBUG_PRINTING:
-                print("[PRINT DEBUG] scene_to_image returned null image")
-            return
-
-        if DEBUG_PRINTING:
-            print(
-                "[PRINT DEBUG] scene_to_image returned:",
-                img.width(),
-                "x",
-                img.height(),
-            )
-
-        # ========== Patch 9: Printer worker with error handling ==========
+    def _submit_print_job(self, job):
+        """Submit exactly the prepared pixels; completion means bytes sent."""
         try:
-            worker = PrinterWorker(
-                action="print",
-                payload={
-                    "image": img,
-                    "config": self.printer_cfg,
-                },
-            )
+            worker = PrinterWorker(action="print", payload={"job": job, "config": dict(self.printer_cfg)})
             self._workers.add(worker)
+            def on_error(error):
+                self.statusBar().showMessage(f"Erro de envio: {error}", 10000)
+                QtWidgets.QMessageBox.critical(self, "Erro de envio", f"{error}\n\nConfirme o estado da impressora antes de repetir o envio.")
 
-            def _on_finished():
-                self.statusBar().showMessage("Print job finished", 3000)
-                try:
-                    self._workers.discard(worker)
-                except Exception:
-                    pass
+            def on_finished():
+                self._workers.discard(worker)
 
-            def _on_error(err: str):
-                if DEBUG_PRINTING:
-                    print("[PRINT ERROR]", err)
-                self.statusBar().showMessage(f"Print error: {err}", 5000)
-                QtWidgets.QMessageBox.critical(
-                    self,
-                    "Print Error",
-                    f"The printer reported an error:\n\n{err}\n\n"
-                    "Please check:\n"
-                    "• Printer is powered on and connected\n"
-                    "• Printer has paper loaded\n"
-                    "• No paper jams or other issues"
-                )
-
-            worker.signals.finished.connect(_on_finished)
-            worker.signals.error.connect(_on_error)
+            worker.signals.sent.connect(lambda text: self.statusBar().showMessage(text, 10000))
+            worker.signals.error.connect(on_error)
+            worker.signals.finished.connect(on_finished)
             worker.start()
-            
-        except ConnectionError:
-            QtWidgets.QMessageBox.critical(
-                self,
-                "Printer Connection Error",
-                "Could not connect to the printer. Please check:\n\n"
-                "• Printer is powered on\n"
-                "• USB/Network cable is connected\n"
-                "• Printer drivers are installed\n"
-                "• No other application is using the printer"
-            )
-        except PermissionError:
-            QtWidgets.QMessageBox.critical(
-                self,
-                "Printer Permission Error",
-                "You don't have permission to access the printer.\n\n"
-                "Try running the application as administrator or check printer permissions."
-            )
-        except Exception as e:
-            QtWidgets.QMessageBox.critical(
-                self,
-                "Print Error",
-                f"An error occurred while starting the print job:\n\n"
-                f"Error: {type(e).__name__}: {e}"
-            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Erro de envio", str(exc))
 
     def export_png(self):
         """
@@ -868,7 +863,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._workers.add(worker)
 
         def _on_finished():
-            self.statusBar().showMessage(f"{action.title()} done", 2000)
             try:
                 self._workers.discard(worker)
             except Exception:
@@ -880,6 +874,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"{action.title()} error: {err}", 5000)
             QtWidgets.QMessageBox.warning(self, f"{action.title()} error", err)
 
+        worker.signals.sent.connect(lambda text: self.statusBar().showMessage(text, 7000))
         worker.signals.finished.connect(_on_finished)
         worker.signals.error.connect(_on_error)
         worker.start()
@@ -888,8 +883,8 @@ class MainWindow(QtWidgets.QMainWindow):
     # Persistence (Template + Printer)
     # -------------------------
     def save_template(self):
-        """Save template to file with improved error handling."""
-        _persist.save_template(self)
+        """Save the current editor document in the personal library."""
+        return self.save_layout()
 
     def load_template(self):
         """Load template from file with improved error handling."""
@@ -962,24 +957,16 @@ class MainWindow(QtWidgets.QMainWindow):
         _persist.clear_recent_files(self)
 
     def preview_print(self):
-        """Show print preview dialog before printing"""
-        # Check for missing variables (non-blocking warning)
+        """Prepare once and send the exact preview job if accepted."""
         self._warn_missing_variables()
-
-        img = scene_to_image(self.scene, scale=1.0)
-        
-        if img is None or img.isNull():
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Preview Error",
-                "Could not render scene for preview"
-            )
-            return
-        
-        dlg = PrintPreviewDialog(img, self)
-        if dlg.exec() == QtWidgets.QDialog.Accepted:
-            # User clicked "Print" in the preview dialog
-            self.print_now()
+        try:
+            from .print_render import pil_to_qimage
+            job = self._prepare_print_job()
+            dlg = PrintPreviewDialog(pil_to_qimage(job.preview), self)
+            if dlg.exec() == QtWidgets.QDialog.Accepted:
+                self._submit_print_job(job)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Erro de pré-visualização", str(exc))
 
     def _show_alignment_guides(self, moving_item: GItem):
         """Show alignment guides when item aligns with others"""
@@ -1086,15 +1073,20 @@ class MainWindow(QtWidgets.QMainWindow):
         s = self.settings
         return {
             "interface": s.value("printer/interface", "network"),
-            "host": s.value("printer/host", "192.168.1.50"),
+            "host": s.value("printer/host", "192.168.1.10"),
             "port": int(s.value("printer/port", 9100)),
             "darkness": int(s.value("printer/darkness", 200)),
-            "threshold": int(s.value("printer/threshold", 180)),
-            "cut_mode": (s.value("printer/cut_mode", "partial") or "partial"),
+            "threshold": int(s.value("printer/threshold", 170)),
+            "cut_mode": (s.value("printer/cut_mode", "full") or "full"),
             "dpi": int(s.value("printer/dpi", 203)),
-            "width_px": int(s.value("printer/width_px", 0)),
+            "width_px": int(s.value("printer/width_px", 576)),
             "timeout": float(s.value("printer/timeout", 30.0)),
-            "profile": s.value("printer/profile", "TM-T88IV"),
+            "profile": s.value("printer/profile", "AB-88H"),
+            "printable_width_mm": 72.0,
+            "paper_width_mm": 80.0,
+            "conversion": "threshold",
+            "feed_lines": 4,
+            "source_ip": s.value("printer/source_ip", ""),
         }
 
     def save_printer_settings(self):
@@ -1103,7 +1095,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Legacy single-config keys (keep for backwards compatibility)
         s.setValue("printer/interface", cfg.get("interface", "network"))
-        s.setValue("printer/host", cfg.get("host", "192.168.1.50"))
+        s.setValue("printer/host", cfg.get("host", "192.168.1.10"))
         s.setValue("printer/port", int(cfg.get("port", 9100)))
         s.setValue("printer/darkness", int(cfg.get("darkness", 200)))
         s.setValue("printer/threshold", int(cfg.get("threshold", 180)))
@@ -1111,7 +1103,8 @@ class MainWindow(QtWidgets.QMainWindow):
         s.setValue("printer/dpi", int(cfg.get("dpi", 203)))
         s.setValue("printer/width_px", int(cfg.get("width_px", 0)))
         s.setValue("printer/timeout", float(cfg.get("timeout", 30.0)))
-        s.setValue("printer/profile", cfg.get("profile", "TM-T88IV"))
+        s.setValue("printer/profile", cfg.get("profile", "AB-88H"))
+        s.setValue("printer/source_ip", cfg.get("source_ip", ""))
 
         # Update current profile config and persist the profiles JSON
         if hasattr(self, "profiles") and hasattr(self, "current_profile_index"):
@@ -1127,7 +1120,13 @@ class MainWindow(QtWidgets.QMainWindow):
         printer config (load_printer_settings) into a 'Default' profile.
         """
         # Use the centralized profiles module (single source of truth)
-        profile_objs = load_profiles(load_single_fn=self.load_printer_settings)
+        raw = self.settings.value("printer/profiles_json", "", type=str)
+        try:
+            profile_objs = [PrinterProfile.from_dict(p) for p in json.loads(raw)] if raw else []
+        except (ValueError, TypeError):
+            profile_objs = []
+        if not profile_objs:
+            profile_objs = [PrinterProfile(name="AB-88H", config=self.load_printer_settings())]
 
         # Convert to list[dict] for internal use (maintains compatibility)
         self.profiles: list[dict] = [p.to_dict() for p in profile_objs]
@@ -1151,7 +1150,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             # Convert list[dict] to list[PrinterProfile] for the module
             profile_objs = [PrinterProfile.from_dict(p) for p in self.profiles]
-            save_profiles(profile_objs)
+            self.settings.setValue("printer/profiles_json", json.dumps([p.to_dict() for p in profile_objs]))
         except Exception:
             # Don't crash the app just because save failed
             pass
@@ -1256,7 +1255,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Update darkness spinbox
         if hasattr(self, "sb_darkness"):
             self.sb_darkness.blockSignals(True)
-            self.sb_darkness.setValue(int(self.printer_cfg.get("darkness", 200)))
+            self.sb_darkness.setValue(int(self.printer_cfg.get("threshold", 170)))
             self.sb_darkness.blockSignals(False)
 
         # Update cut combo
@@ -1469,7 +1468,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
 
     def _on_darkness_changed(self, val: int):
-        self.printer_cfg["darkness"] = int(val)
+        self.printer_cfg["threshold"] = int(val)
         self.save_printer_settings()
 
     def _align_selected(self, mode: str):

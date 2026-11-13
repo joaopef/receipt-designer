@@ -119,6 +119,9 @@ class ActionsHost(
 
     printer_cfg: dict
     settings: "QtCore.QSettings"
+    _editor_only_actions: list["QtGui.QAction"]
+    _document_undo_action: "QtGui.QAction"
+    _document_redo_action: "QtGui.QAction"
 
     # Widgets set by build_toolbars_and_menus (declared so type-checkers
     # know they exist after the call)
@@ -135,7 +138,12 @@ class ActionsHost(
     _shortcut_delete: "QtGui.QShortcut"
     _shortcut_duplicate: "QtGui.QShortcut"
 
-    # File operations
+    # Personal library and file operations
+    def show_library(self) -> bool: ...
+    def new_layout(self, name: str | None = ...) -> bool: ...
+    def export_template(self) -> None: ...
+    def edit_cut_markers(self) -> None: ...
+    def _mark_unsaved(self) -> None: ...
     def save_template(self) -> None: ...
     def load_template(self) -> None: ...
     def preview_print(self) -> None: ...
@@ -201,6 +209,9 @@ class PersistenceHost(
 ):
     """Attributes used by ``persistence.py``."""
 
+    current_layout_id: str | None
+    library: object
+    _clean_document_signature: str
     _current_file_path: str | None
     _has_unsaved_changes: bool
     settings: "QtCore.QSettings"

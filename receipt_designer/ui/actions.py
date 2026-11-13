@@ -42,13 +42,20 @@ def build_toolbars_and_menus(mw: ActionsHost) -> None:
     tb_main.setIconSize(QtCore.QSize(16, 16))
     mw.addToolBar(tb_main)
 
-    # File (quick save/load current template)
-    act_save = QtGui.QAction("Save", mw)
-    act_save.setToolTip("Save current template to file (Ctrl+S)")
+    act_library = QtGui.QAction("Biblioteca", mw)
+    act_library.triggered.connect(mw.show_library)
+    tb_main.addAction(act_library)
+    act_new = QtGui.QAction("Novo…", mw)
+    act_new.triggered.connect(lambda: mw.new_layout())
+    tb_main.addAction(act_new)
+
+    # File (library save and JSON import)
+    act_save = QtGui.QAction("Guardar", mw)
+    act_save.setToolTip("Guardar modelo na biblioteca (Ctrl+S)")
     act_save.triggered.connect(mw.save_template)
     tb_main.addAction(act_save)
 
-    act_load = QtGui.QAction("Load", mw)
+    act_load = QtGui.QAction("Importar…", mw)
     act_load.setToolTip("Open template from file (Ctrl+O)")
     act_load.triggered.connect(mw.load_template)
     tb_main.addAction(act_load)
@@ -90,17 +97,17 @@ def build_toolbars_and_menus(mw: ActionsHost) -> None:
 
     # ---- Job settings: Darkness & Cut mode ----
     tb_main.addSeparator()
-    tb_main.addWidget(QtWidgets.QLabel("Darkness:"))
+    tb_main.addWidget(QtWidgets.QLabel("Limiar P/B:"))
 
     mw.sb_darkness = QtWidgets.QSpinBox()
     mw.sb_darkness.setRange(1, 255)
     mw.sb_darkness.setAccelerated(True)
-    mw.sb_darkness.setValue(int(mw.printer_cfg.get("darkness", 180)))
+    mw.sb_darkness.setValue(int(mw.printer_cfg.get("threshold", 170)))
     mw.sb_darkness.valueChanged.connect(mw._on_darkness_changed)
     mw.sb_darkness.setToolTip(
-        "Print darkness level (1-255)\n"
-        "Higher values = darker print\n"
-        "Recommended: 150-200"
+        "Conversão de imagem para preto e branco (1–255).\n"
+        "Um valor maior torna mais píxeis pretos.\n"
+        "Não altera os interruptores DIP Dark/Slow da impressora."
     )
     tb_main.addWidget(mw.sb_darkness)
 
@@ -109,7 +116,7 @@ def build_toolbars_and_menus(mw: ActionsHost) -> None:
 
     mw.cb_cut = QtWidgets.QComboBox()
     mw.cb_cut.addItems(["Full", "Partial", "None"])
-    _cut_saved = (mw.printer_cfg.get("cut_mode", "partial") or "partial").lower()
+    _cut_saved = (mw.printer_cfg.get("cut_mode", "full") or "full").lower()
     _cut_map = {"full": "Full", "partial": "Partial", "none": "None"}
     mw.cb_cut.setCurrentText(_cut_map.get(_cut_saved, "Partial"))
     mw.cb_cut.currentTextChanged.connect(mw._on_cut_changed)
@@ -120,6 +127,10 @@ def build_toolbars_and_menus(mw: ActionsHost) -> None:
         "• None: No cutting (continuous paper)"
     )
     tb_main.addWidget(mw.cb_cut)
+
+    act_cuts = QtGui.QAction("Cortes intermédios…", mw)
+    act_cuts.triggered.connect(mw.edit_cut_markers)
+    tb_main.addAction(act_cuts)
 
     # ---- Printer profile selector ----
     tb_main.addSeparator()
@@ -158,6 +169,7 @@ def build_toolbars_and_menus(mw: ActionsHost) -> None:
         mw.template.width_mm = parse_mm(mw.cb_w_mm.currentText())
         mw.template.height_mm = parse_mm(mw.cb_h_mm.currentText())
         mw.update_paper()
+        mw._mark_unsaved()
 
     mw.cb_w_mm.editTextChanged.connect(lambda *_: _apply_page())
     mw.cb_h_mm.editTextChanged.connect(lambda *_: _apply_page())
@@ -336,17 +348,23 @@ def build_toolbars_and_menus(mw: ActionsHost) -> None:
     # File
     file_menu = menubar.addMenu("&File")
 
-    act_open = QtGui.QAction("Open Template…", mw)
+    file_menu.addAction(act_library)
+    file_menu.addAction(act_new)
+    file_menu.addSeparator()
+    act_open = QtGui.QAction("Importar modelo JSON…", mw)
     act_open.setShortcut("Ctrl+O")
     act_open.setToolTip("Open template from file (Ctrl+O)")
     act_open.triggered.connect(mw.load_template)
     file_menu.addAction(act_open)
 
-    act_save_menu = QtGui.QAction("Save Template…", mw)
+    act_save_menu = QtGui.QAction("Guardar na biblioteca", mw)
     act_save_menu.setShortcut("Ctrl+S")
-    act_save_menu.setToolTip("Save current template to file (Ctrl+S)")
+    act_save_menu.setToolTip("Guardar modelo na biblioteca (Ctrl+S)")
     act_save_menu.triggered.connect(mw.save_template)
     file_menu.addAction(act_save_menu)
+    act_export_json = QtGui.QAction("Exportar modelo JSON…", mw)
+    act_export_json.triggered.connect(mw.export_template)
+    file_menu.addAction(act_export_json)
 
     file_menu.addSeparator()
     mw.recent_menu = file_menu.addMenu("Recent Files")
@@ -573,3 +591,13 @@ def build_toolbars_and_menus(mw: ActionsHost) -> None:
     act_shortcuts.setToolTip("View all keyboard shortcuts")
     act_shortcuts.triggered.connect(mw._show_keyboard_shortcuts_dialog)
     help_menu.addAction(act_shortcuts)
+
+    # Document shortcuts are inactive while the gallery owns the central page.
+    mw._editor_only_actions = [act_save, act_save_menu, act_export_json, act_export_png,
+                              act_export_pdf, act_preview, act_print, act_file_preview,
+                              act_file_print, act_feed, act_cut_btn, act_cuts]
+    for menu in (edit_menu, insert_menu, layout_menu):
+        mw._editor_only_actions.extend(action for action in menu.actions()
+                                       if action not in (act_undo, act_redo))
+    mw._document_undo_action = act_undo
+    mw._document_redo_action = act_redo
