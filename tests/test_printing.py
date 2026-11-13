@@ -144,7 +144,7 @@ class TestDryRunBackend:
         """PrinterWorker in dry-run mode executes 'print' without hardware."""
         worker = PrinterWorker(
             action="print",
-            payload={"config": {"cut_mode": "partial"}},
+            payload={"image": QtGui.QImage(576, 10, QtGui.QImage.Format_RGB32), "config": {"cut_mode": "partial"}},
             dry_run=True,
         )
         worker.run()

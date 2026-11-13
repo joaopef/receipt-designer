@@ -210,6 +210,13 @@ class PropertiesPanel(QtWidgets.QWidget):
         self.spin_font_size.setRange(1, 300)
         self.spin_font_size.valueChanged.connect(self._on_font_size_changed)
         font_layout.addRow("Size (pt):", self.spin_font_size)
+        self.spin_letter_spacing = QtWidgets.QDoubleSpinBox()
+        self.spin_letter_spacing.setObjectName("letterSpacing")
+        self.spin_letter_spacing.setRange(-20.0, 50.0)
+        self.spin_letter_spacing.setDecimals(2)
+        self.spin_letter_spacing.setSingleStep(0.25)
+        self.spin_letter_spacing.valueChanged.connect(self._on_letter_spacing_changed)
+        font_layout.addRow("Espaçamento (px):", self.spin_letter_spacing)
 
         font_style_row = QtWidgets.QHBoxLayout()
         self.chk_bold = QtWidgets.QCheckBox("Bold")
@@ -631,6 +638,7 @@ class PropertiesPanel(QtWidgets.QWidget):
                     f = QtGui.QFont(font_family)
                     self.font_combo.setCurrentFont(f)
                     self.spin_font_size.setValue(font_pt)
+                    self.spin_letter_spacing.setValue(float(getattr(elem, "letter_spacing_px", 0)))
                     self.chk_bold.setChecked(bold)
                     self.chk_italic.setChecked(italic)
 
@@ -1267,6 +1275,10 @@ class PropertiesPanel(QtWidgets.QWidget):
         self._font_size_undo_timer.stop()
         self._font_size_undo_timer.start()
         # ========== END Patch 8 ==========
+
+    def _on_letter_spacing_changed(self, value: float):
+        if not self._updating_ui and self._mode == "text" and self._current_elem is not None:
+            self._push_elem_property("letter_spacing_px", float(value), "Alterar espaçamento")
 
     def _on_bold_toggled(self, checked: bool):
         if self._updating_ui or self._mode != "text":

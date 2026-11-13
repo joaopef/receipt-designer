@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import socket
+import sys
 from typing import Optional
 
-from .exceptions import PrinterConnectionError, PrinterConfigError, map_exception
+from .exceptions import PrinterConnectionError, PrinterConfigError, PrintJobError, map_exception
+
+
+class UncertainTransmissionError(PrintJobError):
+    """Some bytes may have reached the printer; an automatic retry is unsafe."""
 
 try:
     import serial  # pyserial
@@ -21,19 +26,58 @@ class BaseBackend:
     def send(self, data: bytes) -> None:
         raise NotImplementedError
 
+    def send_stream(self, chunks) -> None:
+        self.send(b''.join(chunks))
+
 
 class NetworkBackend(BaseBackend):
-    def __init__(self, host: str, port: int = 9100, timeout: float = 5.0):
+    def __init__(self, host: str, port: int = 9100, timeout: float = 5.0,
+                 source_ip: Optional[str] = None, interface_index: Optional[int] = None):
         self.host = host
         self.port = int(port)
         self.timeout = float(timeout)
+        self.source_ip = source_ip or None
+        self.interface_index = int(interface_index) if interface_index is not None else None
+        if self.interface_index is not None and (sys.platform != 'win32' or self.interface_index <= 0):
+            raise PrinterConfigError('An explicit interface index requires Windows and a positive index.')
+
+    def _connect(self):
+        if self.interface_index is None:
+            kwargs = {'timeout': self.timeout}
+            if self.source_ip:
+                kwargs['source_address'] = (self.source_ip, 0)
+            return socket.create_connection((self.host, self.port), **kwargs)
+        # This changes this socket, never OS routes.
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.settimeout(self.timeout)
+            sock.setsockopt(socket.IPPROTO_IP, getattr(socket, 'IP_UNICAST_IF', 31), socket.htonl(self.interface_index))
+            if self.source_ip:
+                sock.bind((self.source_ip, 0))
+            sock.connect((self.host, self.port))
+            return sock
+        except Exception:
+            sock.close()
+            raise
 
     def send(self, data: bytes) -> None:
+        self.send_stream([data])
+
+    def send_stream(self, chunks) -> None:
+        attempted = False
         try:
-            with socket.create_connection((self.host, self.port), timeout=self.timeout) as s:
+            with self._connect() as s:
                 s.settimeout(self.timeout)
-                s.sendall(data)
+                for chunk in chunks:
+                    if chunk:
+                        attempted = True
+                        s.sendall(chunk)
         except Exception as exc:
+            if attempted:
+                raise UncertainTransmissionError(
+                    'Transmission uncertain: some data may have reached the printer. '
+                    'Check the paper before sending again; no automatic retry was made.'
+                ) from exc
             raise map_exception(exc) from exc
 
 
@@ -48,14 +92,20 @@ class SerialBackend(BaseBackend):
         self.timeout = float(timeout)
 
     def send(self, data: bytes) -> None:
+        attempted = False
         try:
-            ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
+            ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout, write_timeout=self.timeout)
             try:
-                ser.write(data)
+                attempted = True
+                written = ser.write(data)
+                if written != len(data):
+                    raise OSError('Incomplete serial write.')
                 ser.flush()
             finally:
                 ser.close()
         except Exception as exc:
+            if attempted:
+                raise UncertainTransmissionError('Transmission uncertain after serial write; check the paper before sending again.') from exc
             raise map_exception(exc) from exc
 
 
@@ -116,7 +166,12 @@ class USBBackend(BaseBackend):
         assert self._ep_out is not None
         CHUNK = 16384
         for i in range(0, len(data), CHUNK):
-            self._ep_out.write(data[i:i + CHUNK])
+            chunk = data[i:i + CHUNK]
+            try:
+                if self._ep_out.write(chunk) != len(chunk):
+                    raise OSError('Incomplete USB write.')
+            except Exception as exc:
+                raise UncertainTransmissionError('Transmission uncertain after USB write; check the paper before sending again.') from exc
 
 
 class DryRunBackend(BaseBackend):
@@ -142,14 +197,17 @@ def make_backend(cfg: dict) -> BaseBackend:
     if iface == "dry_run":
         return DryRunBackend()
     if iface == "network":
-        return NetworkBackend(cfg.get("host", "127.0.0.1"), int(cfg.get("port", 9100)))
+        return NetworkBackend(cfg.get("host", "192.168.1.10"), int(cfg.get("port", 9100)),
+                              float(cfg.get('timeout', 5)), cfg.get('source_ip'), cfg.get('interface_index'))
     if iface == "serial":
-        return SerialBackend(cfg.get("serial_port", "COM1"), int(cfg.get("baudrate", 19200)))
+        return SerialBackend(cfg.get("serial_port", "COM1"), int(cfg.get("baudrate", 19200)), float(cfg.get('timeout', 2)))
     if iface == "usb":
-        vid = int(cfg.get("usb_vid", 0))
-        pid = int(cfg.get("usb_pid", 0))
-        ep = cfg.get("usb_endpoint")
-        ep = int(ep) if ep is not None else None
+        def number(value):
+            return int(value, 0) if isinstance(value, str) else int(value)
+        vid = number(cfg.get("usb_vid", 0))
+        pid = number(cfg.get("usb_pid", 0))
+        ep = cfg.get("usb_endpoint", cfg.get('usb_out'))
+        ep = number(ep) if ep is not None else None
         iface_no = cfg.get("usb_interface")
         iface_no = int(iface_no) if iface_no is not None else None
         if not (vid and pid):

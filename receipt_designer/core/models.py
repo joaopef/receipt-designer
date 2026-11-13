@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict, fields
 from typing import List, Tuple, Optional, Any, Dict
 import re
+import math
 
 
 # ---------- Core element model ----------
@@ -20,6 +21,7 @@ class Element:
     text: str = ""
     font_family: str = "Arial"
     font_size: int = 12
+    letter_spacing_px: float = 0.0
     bold: bool = False
     italic: bool = False
     halign: str = "left"            # left|center|right
@@ -54,6 +56,13 @@ class Element:
     # arbitrary extras for forward-compat
     data: Dict[str, Any] = field(default_factory=dict)
 
+    # Editor spellings are aliases so edits serialize in the canonical fields.
+    h_align = property(lambda self: self.halign, lambda self, value: setattr(self, 'halign', value))
+    v_align = property(lambda self: self.valign, lambda self, value: setattr(self, 'valign', value))
+    font_point = property(lambda self: self.font_size, lambda self, value: setattr(self, 'font_size', value))
+    wrap_mode = property(lambda self: 'word' if self.wrap else 'any',
+                         lambda self, value: setattr(self, 'wrap', value == 'word'))
+
     # ---- helpers used by scene items / persistence ----
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -67,6 +76,12 @@ class Element:
         - Missing optional keys use dataclass defaults
         - Missing required keys (kind, x, y, w, h) use safe fallbacks
         """
+        d = dict(d)
+        for alias, canonical in [('h_align', 'halign'), ('v_align', 'valign'), ('font_point', 'font_size')]:
+            if alias in d:
+                d.setdefault(canonical, d.pop(alias))
+        if 'wrap_mode' in d:
+            d.setdefault('wrap', d.pop('wrap_mode') == 'word')
         # Get the set of valid field names for Element
         valid_fields = {f.name for f in fields(Element)}
 
@@ -237,6 +252,27 @@ class VariableManager:
 
 # ---------- Template / document ----------
 
+@dataclass(frozen=True)
+class CutMarker:
+    """A physical cut between document rows; it never produces printed ink."""
+    position_mm: float
+    mode: str = 'full'
+
+    def __post_init__(self):
+        if not isinstance(self.position_mm, (int, float)) or not math.isfinite(self.position_mm) or self.position_mm <= 0:
+            raise ValueError('Cut position must be a finite positive number.')
+        if self.mode not in ('full', 'partial'):
+            raise ValueError('Cut mode must be full or partial.')
+
+    def to_dict(self):
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(data):
+        if not isinstance(data, dict) or 'position_mm' not in data:
+            raise ValueError('Cut marker requires position_mm.')
+        return CutMarker(data['position_mm'], data.get('mode', 'full'))
+
 @dataclass
 class Template:
     # page / printer
@@ -256,6 +292,17 @@ class Template:
     
     # variables
     variable_manager: VariableManager = field(default_factory=VariableManager)
+    schema_version: int = 2
+    cut_markers: List[CutMarker] = field(default_factory=list)
+
+    def validate_cuts(self):
+        positions = []
+        for marker in self.cut_markers:
+            if not isinstance(marker, CutMarker) or marker.position_mm >= self.height_mm:
+                raise ValueError('Cut positions must be inside the document height.')
+            if marker.position_mm in positions:
+                raise ValueError('Cut positions must be distinct.')
+            positions.append(marker.position_mm)
 
     # ---- convenience ----
     @property
@@ -271,7 +318,10 @@ class Template:
         return self.height_mm * self.px_per_mm
 
     def to_dict(self) -> Dict[str, Any]:
+        self.validate_cuts()
         return {
+            "schema_version": self.schema_version,
+            "cut_markers": [marker.to_dict() for marker in self.cut_markers],
             "width_mm": self.width_mm,
             "height_mm": self.height_mm,
             "dpi": self.dpi,
@@ -286,6 +336,9 @@ class Template:
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "Template":
+        schema = d.get('schema_version', 1)
+        if type(schema) is not int or schema not in (1, 2):
+            raise ValueError(f'Unsupported document schema version: {schema!r}.')
         # Use same default as dataclass field: (4.0, 0.0, 4.0, 0.0)
         t = Template(
             width_mm=d.get("width_mm", 80.0),
@@ -296,6 +349,8 @@ class Template:
             version=d.get("version", "1.0"),
         )
         t.elements = [Element.from_dict(x) for x in d.get("elements", [])]
+        t.cut_markers = [CutMarker.from_dict(x) for x in d.get('cut_markers', [])]
+        t.validate_cuts()
         t.guides = [GuideLine.from_dict(x) for x in d.get("guides", [])]
         g = d.get("grid")
         if g:

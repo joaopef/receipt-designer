@@ -215,7 +215,7 @@ class GItem(ContextMenuMixin, QtWidgets.QGraphicsRectItem):
         if not text:
             return ""
 
-        now = datetime.now()
+        now = getattr(self, '_render_now', None) or datetime.now()
 
         # First, resolve user variables if we have access to the main window
         # (This will be set up in the integration)
@@ -324,6 +324,8 @@ class GItem(ContextMenuMixin, QtWidgets.QGraphicsRectItem):
         f = QtGui.QFont(family, size)
         f.setBold(bold)
         f.setItalic(italic)
+        f.setLetterSpacing(QtGui.QFont.AbsoluteSpacing,
+                           float(getattr(self.elem, "letter_spacing_px", 0.0)))
 
         # base flags from align + wrap
         flags = QtCore.Qt.AlignmentFlag(0)
@@ -630,11 +632,12 @@ class GItem(ContextMenuMixin, QtWidgets.QGraphicsRectItem):
 
         key = (
             getattr(self.elem, "kind", "text"),
-            getattr(self.elem, "text", ""),
+            self._resolve_text(getattr(self.elem, "text", "") or ""),
             getattr(self.elem, "font_family", "Arial"),
             size,
             bool(getattr(self.elem, "bold", False)),
             bool(getattr(self.elem, "italic", False)),
+            float(getattr(self.elem, "letter_spacing_px", 0.0)),
             getattr(self.elem, "h_align", "left"),
             getattr(self.elem, "v_align", "top"),
             getattr(self.elem, "wrap_mode", "word"),
@@ -696,8 +699,10 @@ class GItem(ContextMenuMixin, QtWidgets.QGraphicsRectItem):
             # that by mirroring the cached image horizontally.
             tf = painter.worldTransform()
             try:
-                if tf.m11() < 0:
-                    img = img.mirrored(True, False)
+                # A 180-degree rotation also has m11 < 0, but is not a
+                # reflection. Only counteract a genuinely reflected view.
+                if tf.m11() < 0 and tf.determinant() < 0:
+                    img = img.flipped(QtCore.Qt.Orientation.Horizontal)
             except Exception:
                 # If anything weird happens, just fall back to the original image.
                 img = self._cache_qimage
