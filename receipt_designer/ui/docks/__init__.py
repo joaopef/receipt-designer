@@ -60,6 +60,8 @@ def build_docks(mw: DocksHost) -> None:
     # Show Properties by default
     dock_props.raise_()
 
+    # Variables are document content even when no graphics item changes.
+    mw.variable_panel.variables_changed.connect(mw._mark_unsaved)
     # Connect variable changes to view updates
     mw.variable_panel.variables_changed.connect(
         lambda: mw.view.viewport().update()

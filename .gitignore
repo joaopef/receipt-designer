@@ -29,3 +29,7 @@ env/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Local UI verification data
+/work/
+/dist-final/

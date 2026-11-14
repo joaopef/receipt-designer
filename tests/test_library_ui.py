@@ -16,8 +16,11 @@ def window(qapp, tmp_path, monkeypatch):
     settings = QtCore.QSettings(str(tmp_path / 'settings.ini'), QtCore.QSettings.IniFormat)
     w = MainWindow(settings=settings, library_root=tmp_path / 'library')
     yield w
-    w._has_unsaved_changes = False
-    w.close()
+    from receipt_designer.ui.library_page import set_clean
+    w._inline_editor.cancelEdit()
+    set_clean(w)
+    if not getattr(w, '_closed_by_test', False):
+        w.close()
     qapp.processEvents()
 
 
@@ -253,3 +256,177 @@ def test_gallery_disables_document_save_print_and_insert_shortcuts(window):
     assert actions['Guardar na biblioteca'].isEnabled()
     assert actions['Print…'].isEnabled()
     assert actions['Text'].isEnabled()
+
+@pytest.mark.parametrize('trigger', ['timer', 'close'])
+def test_variable_edit_event_autosaves_even_if_dirty_flag_becomes_stale(window, qapp, monkeypatch, tmp_path, trigger):
+    import json
+    from PySide6 import QtTest
+    from receipt_designer.ui.variables import VariableDialog
+    window.new_layout('Só variáveis')
+    window.template.variable_manager.set_variable('film', 'Antes')
+    window._refresh_variable_panel()
+    assert window.save_layout()
+    original = window.current_layout_id
+    qapp.processEvents()
+    assert not window._has_unsaved_changes
+    panel = window.variable_panel
+    for row in range(panel.list_widget.count()):
+        if panel.list_widget.item(row).data(QtCore.Qt.UserRole) == 'film':
+            panel.list_widget.setCurrentRow(row)
+            break
+    def edit(dialog):
+        dialog.value_edit.setPlainText('Depois')
+        return QtWidgets.QDialog.Accepted
+    monkeypatch.setattr(VariableDialog, 'exec', edit)
+    edit_button = next(button for button in panel.findChildren(QtWidgets.QPushButton) if button.text() == 'Edit')
+    QtTest.QTest.mouseClick(edit_button, QtCore.Qt.LeftButton)
+    assert window.template.variable_manager.get_variable('film') == 'Depois'
+    assert window._has_unsaved_changes
+    # Autosave must not depend on every mutation remembering to set this cache.
+    window._has_unsaved_changes = False
+    monkeypatch.setattr(QtCore.QStandardPaths, 'writableLocation', lambda location: str(tmp_path))
+    if trigger == 'timer':
+        window._auto_save_timer.timeout.emit()
+    else:
+        window.close()
+        window._closed_by_test = True
+    data = json.loads((tmp_path / 'receipt_designer_autosave.json').read_text(encoding='utf-8'))
+    assert data['variables']['variables']['film'] == 'Depois'
+    assert data['_autosave_layout_id'] == original
+    assert window.library.load(original).variable_manager.get_variable('film') == 'Antes'
+
+
+def test_snapshot_preview_and_saved_layout_preserve_equal_z_stacking(window):
+    from receipt_designer.core.models import Element
+    from receipt_designer.ui.items import create_item_from_element
+    from receipt_designer.core.render import scene_to_image
+    window.new_layout('Camadas')
+    for color in ['#000000', '#ffffff']:
+        item = create_item_from_element(Element(kind='rect', x=80, y=80, w=80, h=80, fill_color=color, stroke_color=color, z=0))
+        window.scene.addItem(item)
+    canvas = scene_to_image(window.scene)
+    assert canvas.pixelColor(120, 120).value() == 255
+    # Paper crop removes 4mm from each side; 120 design pixels maps near 88 output pixels.
+    job = window._prepare_print_job()
+    assert job.preview.convert('L').getpixel((88, 120)) == 255
+    assert window.save_layout()
+    id = window.current_layout_id
+    assert window.show_library()
+    assert window.open_layout(id)
+    assert scene_to_image(window.scene).pixelColor(120, 120).value() == 255
+    assert window._prepare_print_job().preview.convert('L').getpixel((88, 120)) == 255
+
+
+def test_repaint_does_not_commit_inline_edit_and_explicit_save_keeps_typed_text(window, qapp):
+    from receipt_designer.ui.items import GItem
+    window.new_layout('Texto em linha')
+    window.add_text()
+    item = next(item for item in window.scene.items() if isinstance(item, GItem))
+    assert window._inline_editor.startEditing(item)
+    assert window._inline_editor.isEditing()
+    qapp.processEvents()
+    assert window._inline_editor.isEditing()
+    editor = window._inline_editor
+    editor._editor.setPlainText('Texto preservado')
+    assert window.save_layout()
+    assert not editor.isEditing()
+    assert window.library.load(window.current_layout_id).elements[0].text == 'Texto preservado'
+
+def test_open_layout_binds_variable_text_to_loaded_document(window):
+    from receipt_designer.core.models import Template, Element
+    from receipt_designer.ui.items import GItem
+    template = Template(name='Variáveis carregadas')
+    template.variable_manager.set_variable('film', 'FILME RESOLVIDO')
+    template.elements = [Element(kind='text', x=40, y=20, w=300, h=40, text='{{var:film}}')]
+    info = window.library.save(template)
+    assert window.open_layout(info.id)
+    item = next(item for item in window.scene.items() if isinstance(item, GItem))
+    assert item._resolve_text(item.elem.text) == 'FILME RESOLVIDO'
+    assert item.elem.text == '{{var:film}}'
+
+
+def test_light_theme_keeps_controls_readable_with_dark_system_palette(window, qapp):
+    from PySide6 import QtGui
+    inherited = QtGui.QPalette()
+    inherited.setColor(QtGui.QPalette.Button, QtGui.QColor('#d4d0c8'))
+    inherited.setColor(QtGui.QPalette.ButtonText, QtGui.QColor('#ffffff'))
+    qapp.setStyle('Windows')
+    qapp.setPalette(inherited)
+    window._apply_theme_mode(False)
+    assert qapp.style().objectName().lower() == 'fusion'
+    palette = qapp.palette()
+    for background, foreground in [
+        (QtGui.QPalette.Button, QtGui.QPalette.ButtonText),
+        (QtGui.QPalette.Window, QtGui.QPalette.WindowText),
+        (QtGui.QPalette.Base, QtGui.QPalette.Text),
+    ]:
+        assert palette.color(background).lightness() > 220
+        assert palette.color(foreground).lightness() < 70
+
+def test_recovered_variable_edit_survives_repaint_close_and_second_relaunch(window, qapp, monkeypatch, tmp_path):
+    from receipt_designer.ui import persistence, library_page
+    window.new_layout('Recuperação persistente')
+    window.template.variable_manager.set_variable('film', 'Título original')
+    assert window.save_layout()
+    layout_id = window.current_layout_id
+    qapp.processEvents()
+    window.template.variable_manager.set_variable('film', 'Título recuperado')
+    monkeypatch.setattr(QtCore.QStandardPaths, 'writableLocation', lambda location: str(tmp_path))
+    window._auto_save()
+    autosave = tmp_path / 'receipt_designer_autosave.json'
+    assert autosave.exists()
+    monkeypatch.setattr(MainWindow, '_load_crash_recovery', persistence.load_crash_recovery)
+    monkeypatch.setattr(QtWidgets.QMessageBox, 'question', lambda *a, **kw: QtWidgets.QMessageBox.Yes)
+    opened = []
+    try:
+        fresh = MainWindow(settings=window.settings, library_root=window.library.root)
+        opened.append(fresh)
+        fresh.show()
+        qapp.processEvents()
+        assert fresh.current_layout_id == layout_id
+        assert fresh.template.variable_manager.get_variable('film') == 'Título recuperado'
+        assert persistence.has_unsaved_changes(fresh)
+        # A navigation Cancel must keep recovery work even after queued repaint signals.
+        monkeypatch.setattr(QtWidgets.QMessageBox, 'warning', lambda *a, **kw: QtWidgets.QMessageBox.Cancel)
+        assert not fresh.show_library()
+        fresh.close()
+        opened.remove(fresh)
+        assert autosave.exists()
+        assert window.library.load(layout_id).variable_manager.get_variable('film') == 'Título original'
+        again = MainWindow(settings=window.settings, library_root=window.library.root)
+        opened.append(again)
+        again.show()
+        qapp.processEvents()
+        assert again.current_layout_id == layout_id
+        assert again.template.variable_manager.get_variable('film') == 'Título recuperado'
+        assert persistence.has_unsaved_changes(again)
+        assert again.save_layout()
+        qapp.processEvents()
+        assert not persistence.has_unsaved_changes(again)
+        assert window.library.load(layout_id).variable_manager.get_variable('film') == 'Título recuperado'
+    finally:
+        for candidate in opened:
+            library_page.set_clean(candidate)
+            candidate.close()
+
+
+@pytest.mark.parametrize('source', ['new', 'import'])
+def test_unsaved_document_requires_save_after_queued_repaint(window, qapp, tmp_path, monkeypatch, source):
+    import json
+    from receipt_designer.ui import persistence
+    if source == 'new':
+        assert window.new_layout('Documento novo sem elementos')
+    else:
+        path = tmp_path / 'external.json'
+        path.write_text(json.dumps({'name': 'Importado sem elementos', 'elements': []}), encoding='utf-8')
+        window._load_template_path(str(path))
+    window.show()
+    qapp.processEvents()
+    assert window.current_layout_id is None
+    assert persistence.has_unsaved_changes(window)
+    monkeypatch.setattr(QtWidgets.QMessageBox, 'warning', lambda *a, **kw: QtWidgets.QMessageBox.Cancel)
+    assert not window.show_library()
+    assert window.pages.currentWidget() is window.editor_page
+    assert window.save_layout()
+    qapp.processEvents()
+    assert not persistence.has_unsaved_changes(window)

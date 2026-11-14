@@ -200,6 +200,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if app is None:
             return
 
+        # The native Windows 11 style can ignore palette text colors when the
+        # OS uses dark mode. Fusion honors our explicit light/dark palettes.
+        if app.style().objectName().lower() != 'fusion':
+            app.setStyle('Fusion')
+
         if dark:
             # Dark palette
             palette = QtGui.QPalette()
@@ -241,8 +246,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 if hasattr(self.view, 'setDarkMode'):
                     self.view.setDarkMode(True)
         else:
-            # Light mode - restore default palette
-            app.setPalette(app.style().standardPalette())
+            # Windows can return light controls with dark-system white labels.
+            # Define both surfaces and text instead of inheriting that mixture.
+            palette = QtGui.QPalette()
+            for role in (QtGui.QPalette.Window, QtGui.QPalette.Button, QtGui.QPalette.AlternateBase):
+                palette.setColor(role, QtGui.QColor('#f0f0f0'))
+            for role in (QtGui.QPalette.Base, QtGui.QPalette.ToolTipBase):
+                palette.setColor(role, QtGui.QColor('#ffffff'))
+            for role in (QtGui.QPalette.WindowText, QtGui.QPalette.ButtonText, QtGui.QPalette.Text, QtGui.QPalette.ToolTipText):
+                palette.setColor(role, QtGui.QColor('#202020'))
+            palette.setColor(QtGui.QPalette.Highlight, QtGui.QColor('#2574c4'))
+            palette.setColor(QtGui.QPalette.HighlightedText, QtGui.QColor('#ffffff'))
+            for role in (QtGui.QPalette.WindowText, QtGui.QPalette.ButtonText, QtGui.QPalette.Text):
+                palette.setColor(QtGui.QPalette.Disabled, role, QtGui.QColor('#777777'))
+            app.setPalette(palette)
             app.setStyleSheet("")
 
             # Update canvas background for light mode
@@ -1691,9 +1708,11 @@ class MainWindow(QtWidgets.QMainWindow):
         worker.start()
 
     def closeEvent(self, e: QtGui.QCloseEvent):
+        if self._inline_editor.isEditing():
+            self._inline_editor.commitEdit()
         # Force autosave on close if there are unsaved changes
         # This ensures recovery works even if timer hasn't fired yet
-        if self._has_unsaved_changes:
+        if _persist.has_unsaved_changes(self):
             if DEBUG_AUTOSAVE:
                 print("[AUTOSAVE DEBUG] Forcing autosave on close due to unsaved changes")
             self._auto_save()

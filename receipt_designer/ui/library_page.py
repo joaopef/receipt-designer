@@ -117,9 +117,9 @@ class LibraryPage(QtWidgets.QWidget):
         self._update_buttons()
 
 
-def snapshot(mw):
+def snapshot(mw, *, commit=True):
     """Copy the full model, replacing only the scene-owned elements."""
-    if mw._inline_editor.isEditing():
+    if commit and mw._inline_editor.isEditing():
         mw._inline_editor.commitEdit()
     template = copy.deepcopy(mw.template)
     template.elements = [Element.from_dict(e) for e in persistence._collect_elements(mw)]
@@ -127,13 +127,24 @@ def snapshot(mw):
 
 
 def signature(mw):
-    return json.dumps(snapshot(mw).to_dict(), sort_keys=True, ensure_ascii=False)
+    return json.dumps(snapshot(mw, commit=False).to_dict(), sort_keys=True, ensure_ascii=False)
 
 
 def set_clean(mw):
     mw._clean_document_signature = signature(mw)
     mw._has_unsaved_changes = False
     mw.undo_stack.setClean()
+
+
+def set_pending_save(mw):
+    """No saved baseline exists for this new, imported or recovered state.
+
+    An empty signature cannot match a serialized document, so queued scene
+    repaints cannot clear this state before an explicit save or discard.
+    """
+    mw._clean_document_signature = ''
+    mw._has_unsaved_changes = True
+    mw.undo_stack.resetClean()
 
 
 def initialize(mw, root=None):
@@ -197,7 +208,7 @@ def guard(mw):
     return False
 
 
-def install_template(mw, template, layout_id=None, path=None):
+def install_template(mw, template, layout_id=None, path=None, *, saved=True):
     mw._inline_editor.cancelEdit()
     mw._clear_alignment_guides()
     mw._clear_column_guides()
@@ -211,7 +222,10 @@ def install_template(mw, template, layout_id=None, path=None):
         with QtCore.QSignalBlocker(widget):
             widget.setCurrentText(f'{value:g} mm')
     mw._update_cut_guides()
-    set_clean(mw)
+    if saved:
+        set_clean(mw)
+    else:
+        set_pending_save(mw)
     show_page(mw, True)
 
 
@@ -222,8 +236,7 @@ def new(mw, name=None):
         name, ok = QtWidgets.QInputDialog.getText(mw, 'Novo modelo', 'Nome:', text='Sem título')
         if not ok or not name.strip():
             return False
-    install_template(mw, Template(name=name.strip()))
-    mw._has_unsaved_changes = True
+    install_template(mw, Template(name=name.strip()), saved=False)
     return True
 
 
@@ -251,7 +264,7 @@ def save(mw):
         return False
     # Rebind scene resources to owned copies; the external source may disappear.
     stored = mw.library.load(info.id)
-    scene_items = [item for item in mw.scene.items() if isinstance(item, persistence.SERIALIZABLE_ITEM_TYPES)]
+    scene_items = [item for item in mw.scene.items(QtCore.Qt.AscendingOrder) if isinstance(item, persistence.SERIALIZABLE_ITEM_TYPES)]
     for item, element in zip(scene_items, stored.elements):
         if hasattr(item, 'elem') and element.image_path:
             item.elem.image_path = element.image_path

@@ -275,3 +275,54 @@ def test_list_trashed_search_survives_restart_and_supports_restore(repository):
 
 def test_list_trashed_before_first_deletion_is_empty(repository):
     assert repository.list_trashed() == []
+
+
+def test_owned_image_paths_stay_stable_across_successive_saves(repository, tmp_path):
+    info = repository.save(image_template(tmp_path))
+    template = repository.load(info.id)
+    owned_path = Path(template.elements[0].image_path)
+    template.name = "Edited without changing the picture"
+    repository.save(template, layout_id=info.id)
+    assert Path(repository.load(info.id).elements[0].image_path) == owned_path
+    assert list((info.folder / "assets").iterdir()) == [owned_path]
+
+
+def test_delete_save_undo_keeps_owned_image_and_portability(repository, tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtGui, QtWidgets
+    from receipt_designer.core.commands import DeleteItemCmd
+    from receipt_designer.ui.items import create_item_from_element
+    from receipt_designer.library import LibraryRepository
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    info = repository.save(image_template(tmp_path))
+    Path(tmp_path / "picture.png").unlink()
+    template = repository.load(info.id)
+    owned_path = Path(template.elements[0].image_path)
+    saved_bytes = owned_path.read_bytes()
+    scene = QtWidgets.QGraphicsScene()
+    item = create_item_from_element(template.elements[0])
+    scene.addItem(item)
+    stack = QtGui.QUndoStack()
+    stack.push(DeleteItemCmd(scene, [item]))
+    assert scene.items() == []
+    template.elements = []
+    repository.save(template, layout_id=info.id)
+    assert owned_path.read_bytes() == saved_bytes
+    assert repository.load(info.id).elements == []
+
+    stack.undo()
+    template.elements = [restored.elem for restored in scene.items()]
+    assert template.elements[0].image_path == str(owned_path)
+    repository.save(template, layout_id=info.id)
+    assert Path(repository.load(info.id).elements[0].image_path) == owned_path
+    assert list((info.folder / "assets").iterdir()) == [owned_path]
+
+    moved_root = tmp_path / "moved-library"
+    shutil.move(str(repository.root), moved_root)
+    moved = LibraryRepository(moved_root)
+    moved_template = moved.load(info.id)
+    moved_asset = Path(moved_template.elements[0].image_path)
+    assert moved_asset == moved_root / info.id / "assets" / owned_path.name
+    assert moved_asset.read_bytes() == saved_bytes
+    moved.save(moved_template, layout_id=info.id)
+    assert Path(moved.load(info.id).elements[0].image_path) == moved_asset

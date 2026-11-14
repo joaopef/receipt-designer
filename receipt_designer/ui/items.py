@@ -1981,7 +1981,7 @@ class GuideLineItem(ContextMenuMixin, QtWidgets.QGraphicsLineItem):
 
 # ---------- Factory function for creating items from Element ----------
 
-def create_item_from_element(elem: Element):
+def _create_item_from_element(elem: Element):
     """
     Factory function to create the appropriate graphics item from an Element.
 
@@ -2124,6 +2124,15 @@ def create_item_from_element(elem: Element):
         item = GItem(elem)
         item.setPos(elem.x, elem.y)
         return item
+
+
+def create_item_from_element(elem: Element):
+    """Restore common document properties for every graphics item kind."""
+    item = _create_item_from_element(elem)
+    item.setZValue(elem.z)
+    item.setRotation(elem.rotation)
+    item.setVisible(elem.visible)
+    return item
 
 
 # Convenience: list of all serializable item types (for isinstance checks)

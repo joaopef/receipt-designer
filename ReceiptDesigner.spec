@@ -49,6 +49,15 @@ a = Analysis(
     optimize=0,
 )
 
+# Qt on current Windows uses the operating system's ICU API. A foreign tool
+# (for example Poppler) on PATH can make bindepend collect an incompatible ICU
+# with version-suffixed exports instead. Do not redistribute that shadow DLL or
+# copy Windows system binaries: let the Windows loader resolve its own ICU.
+import sys
+if sys.platform == 'win32':
+    a.binaries = [entry for entry in a.binaries
+                  if Path(entry[0]).name.lower() not in {'icuuc.dll', 'icudt78.dll'}]
+
 pyz = PYZ(a.pure)
 
 exe = EXE(

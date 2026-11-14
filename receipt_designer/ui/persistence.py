@@ -94,7 +94,7 @@ def resolve_element_paths(elements: list, template_path: str) -> list:
 def _collect_elements(mw: PersistenceHost) -> list[dict]:
     """Collect all serializable elements from the scene as dicts."""
     elements = []
-    for it in mw.scene.items():
+    for it in mw.scene.items(QtCore.Qt.AscendingOrder):
         if isinstance(it, SERIALIZABLE_ITEM_TYPES):
             if hasattr(it, "elem"):
                 elements.append(it.elem.to_dict())
@@ -109,7 +109,7 @@ def _build_scene_from_template(mw: PersistenceHost) -> None:
     for e in mw.template.elements:
         item = create_item_from_element(e)
         item.undo_stack = mw.undo_stack
-        if hasattr(item, "_main_window"):
+        if hasattr(item, "_resolve_text"):
             item._main_window = mw
         mw.scene.addItem(item)
 
@@ -205,9 +205,8 @@ def load_template_path(mw: PersistenceHost, path: str) -> None:
         data.pop("_autosave_original_path", None)
         data.pop("_autosave_layout_id", None)
         template = Template.from_dict(data)
-        library_page.install_template(mw, template, path=path)
+        library_page.install_template(mw, template, path=path, saved=False)
         # Imported files become a new library document on Save.
-        mw._has_unsaved_changes = True
         update_recent_files(mw, path)
         mw.statusBar().showMessage(f"Importado: {path}", 3000)
     except Exception as exc:
@@ -227,19 +226,24 @@ def mark_unsaved(mw: PersistenceHost) -> None:
         mw._has_unsaved_changes = True
 
 
+def has_unsaved_changes(mw: PersistenceHost) -> bool:
+    """The flag is a cache; model-only mutations still need recovery."""
+    dirty = mw._has_unsaved_changes
+    if hasattr(mw, "_clean_document_signature"):
+        from .library_page import signature
+        dirty = dirty or signature(mw) != mw._clean_document_signature
+    mw._has_unsaved_changes = dirty
+    return dirty
+
+
 def auto_save(mw: PersistenceHost) -> None:
     """Auto-save current template to temp location every 60 seconds."""
     if DEBUG_AUTOSAVE:
         print(f"[AUTOSAVE DEBUG] _auto_save called: _has_unsaved_changes={mw._has_unsaved_changes}, scene.items()={len(mw.scene.items())}")
 
-    if not mw._has_unsaved_changes:
+    if not has_unsaved_changes(mw):
         if DEBUG_AUTOSAVE:
             print("[AUTOSAVE DEBUG] Skipping autosave: no unsaved changes")
-        return
-
-    if not mw.scene.items():
-        if DEBUG_AUTOSAVE:
-            print("[AUTOSAVE DEBUG] Skipping autosave: no items in scene")
         return
 
     temp_dir = QtCore.QStandardPaths.writableLocation(
@@ -372,8 +376,7 @@ def load_crash_recovery(mw: PersistenceHost) -> None:
                 except (FileNotFoundError, ValueError):
                     layout_id = None
             from . import library_page
-            library_page.install_template(mw, Template.from_dict(data), layout_id=layout_id, path=original_path)
-            mw._has_unsaved_changes = True
+            library_page.install_template(mw, Template.from_dict(data), layout_id=layout_id, path=original_path, saved=False)
             mw.statusBar().showMessage("Auto-saved work restored", 3000)
             recovery_succeeded = True
 

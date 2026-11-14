@@ -6,7 +6,7 @@ from PySide6 import QtCore
 from receipt_designer.core.models import Element
 from receipt_designer.core.models import Template
 from types import SimpleNamespace
-from receipt_designer.ui.items import GItem
+from receipt_designer.ui.items import GItem, create_item_from_element
 from receipt_designer.ui.properties import PropertiesPanel
 
 
@@ -83,3 +83,14 @@ def test_upside_down_text_is_rotated_not_mirrored(qapp):
         painter.end()
         return bytes(image.constBits())
     assert render(True) == render(False)
+
+
+@pytest.mark.parametrize('kind', ['text', 'image', 'rect', 'line'])
+def test_item_factory_preserves_loaded_model_layer_rotation_and_visibility(qapp, kind):
+    element = Element(kind=kind, x=50, y=30, w=100, h=40,
+                      text='{{var:film}}', z=7, rotation=180, visible=False)
+    item = create_item_from_element(element)
+    assert item.zValue() == 7
+    assert item.rotation() == 180
+    assert not item.isVisible()
+    assert item.pos() == QtCore.QPointF(50, 30)

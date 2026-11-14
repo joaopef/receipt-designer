@@ -63,6 +63,8 @@ class LibraryRepository:
     only reference files within their own ``assets`` directory. Missing or
     escaping resources raise errors rather than silently losing their content.
     An omitted preview on update preserves the existing thumbnail.
+    Owned resources retain their filenames and remain available after removal
+    from the current document, since the editor's undo stack may reference them.
     """
 
     def __init__(self, root: Path):
@@ -181,8 +183,21 @@ class LibraryRepository:
 
     def _copy_assets(self, data: dict, stage: Path, previous: Path | None) -> None:
         assets = stage / "assets"
-        assets.mkdir()
         copied = {}
+        previous_assets = previous / "assets" if previous is not None else None
+        if previous_assets is not None and previous_assets.exists():
+            # Keep assets referenced by deleted items in the editor's undo
+            # history. The document still has one current version; resources
+            # are owned by the layout rather than by a particular snapshot.
+            for resource in [previous_assets, *previous_assets.rglob("*")]:
+                if resource.is_symlink() or not resource.resolve().is_relative_to(previous):
+                    raise ValueError(f"Owned image resource escapes layout: {resource}")
+            shutil.copytree(previous_assets, assets)
+            for resource in previous_assets.rglob("*"):
+                if resource.is_file():
+                    copied[resource.resolve()] = resource.relative_to(previous).as_posix()
+        else:
+            assets.mkdir()
         for element in data.get("elements", []):
             if element.get("kind") != "image" or not element.get("image_path"):
                 continue
