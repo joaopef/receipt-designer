@@ -93,3 +93,14 @@ guardada também na versão final. Não foi usado Python para arrancar o .exe.
 Não foi feito um ensaio numa instalação limpa de Windows nem uma nova tiragem
 física dos dois modelos completos. A ligação física validada foi o teste curto
 já confirmado pelo utilizador.
+
+## Correção da altura das propriedades
+
+O painel devolvia altura mínima zero. No estilo Fusion, a área com scroll
+comprimiu linhas de formulários abaixo da altura mínima dos controlos (até
+1 px numa janela curta), cortando o texto. Passou a conservar a altura mínima
+do layout, mantendo a largura reduzida e usando deslocamento vertical.
+
+Dois testes reproduziram a falha antes da correção, com alturas de 480 e 900.
+Ambos passaram depois; verificam a altura de todos os campos visíveis e o
+acesso aos últimos campos através do scroll. Suite completa: 211 passaram.

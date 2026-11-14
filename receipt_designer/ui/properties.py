@@ -103,7 +103,10 @@ class PropertiesPanel(QtWidgets.QWidget):
         Allow the dock to shrink to something narrower without
         insisting on a giant width (which triggers horizontal scroll).
         """
-        return QtCore.QSize(220, 0)
+        # Preserve the layout's natural minimum height. A zero height lets
+        # QScrollArea squeeze form rows until their text is clipped instead
+        # of offering vertical scrolling.
+        return QtCore.QSize(220, super().minimumSizeHint().height())
 
 
     # --------------------- helpers: mm/px ---------------------
