@@ -294,6 +294,14 @@ class Template:
     variable_manager: VariableManager = field(default_factory=VariableManager)
     schema_version: int = 2
     cut_markers: List[CutMarker] = field(default_factory=list)
+    fit_to_content: bool = False
+
+    def __post_init__(self):
+        self.validate_fit_to_content()
+
+    def validate_fit_to_content(self):
+        if type(self.fit_to_content) is not bool:
+            raise ValueError('fit_to_content must be a boolean.')
 
     def validate_cuts(self):
         positions = []
@@ -319,8 +327,10 @@ class Template:
 
     def to_dict(self) -> Dict[str, Any]:
         self.validate_cuts()
+        self.validate_fit_to_content()
         return {
             "schema_version": self.schema_version,
+            "fit_to_content": self.fit_to_content,
             "cut_markers": [marker.to_dict() for marker in self.cut_markers],
             "width_mm": self.width_mm,
             "height_mm": self.height_mm,
@@ -347,6 +357,7 @@ class Template:
             margins_mm=tuple(d.get("margins_mm", (4.0, 0.0, 4.0, 0.0))),
             name=d.get("name", "Untitled"),
             version=d.get("version", "1.0"),
+            fit_to_content=d.get('fit_to_content', False),
         )
         t.elements = [Element.from_dict(x) for x in d.get("elements", [])]
         t.cut_markers = [CutMarker.from_dict(x) for x in d.get('cut_markers', [])]

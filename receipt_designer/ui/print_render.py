@@ -2,11 +2,15 @@
 import copy
 import math
 from datetime import datetime
-from PIL import Image
+from PIL import Image, ImageChops
 from PySide6 import QtCore, QtGui, QtWidgets
 from ..core.models import Template
 from ..printing.jobs import ThermalProfile, PreparedPrintJob, PrintPart, monochrome
 from .items import create_item_from_element
+
+
+class EmptyPrintableContentError(ValueError):
+    """The final printable raster has no ink to fit."""
 
 
 def pil_to_qimage(image: Image.Image) -> QtGui.QImage:
@@ -23,10 +27,38 @@ def qimage_to_pil(image: QtGui.QImage) -> Image.Image:
                            'raw', 'RGBA', rgba.bytesPerLine()).copy()
 
 
+def _fit_content(preview, cut_rows, margins_mm, dots_per_mm):
+    """Trim only outside ink/cuts, then add the document's vertical padding."""
+    ink = ImageChops.invert(preview.convert('L')).getbbox()
+    if ink is None:
+        raise EmptyPrintableContentError('Não é possível ajustar: o documento não tem tinta visível na área imprimível.')
+    try:
+        _, top_mm, _, bottom_mm = margins_mm
+        top_mm, bottom_mm = float(top_mm), float(bottom_mm)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('Vertical margins must be finite nonnegative millimetres.') from exc
+    if not all(math.isfinite(value) and value >= 0 for value in (top_mm, bottom_mm)):
+        raise ValueError('Vertical margins must be finite nonnegative millimetres.')
+    top, bottom = ink[1], ink[3]
+    if cut_rows:
+        # Preserve a source row on both sides of the outermost cuts, even if
+        # these rows are white. All rows between cuts remain untouched.
+        top = min(top, cut_rows[0][0] - 1)
+        bottom = max(bottom, cut_rows[-1][0] + 1)
+    padding_top = round(top_mm * dots_per_mm)
+    padding_bottom = round(bottom_mm * dots_per_mm)
+    cropped = preview.crop((0, top, preview.width, bottom))
+    fitted = Image.new('1', (preview.width, cropped.height + padding_top + padding_bottom), 255)
+    fitted.paste(cropped, (0, padding_top))
+    shifted_cuts = [(row - top + padding_top, mode) for row, mode in cut_rows]
+    return fitted, shifted_cuts
+
+
 def prepare_print_job(template: Template, profile: ThermalProfile) -> PreparedPrintJob:
     if QtWidgets.QApplication.instance() is None:
         raise RuntimeError('A QApplication is required to render a document.')
     template.validate_cuts()
+    template.validate_fit_to_content()
     if not all(math.isfinite(v) and v > 0 for v in (template.width_mm, template.height_mm, template.dpi)):
         raise ValueError('Document dimensions and resolution must be positive.')
     dots_per_mm = profile.width_px / profile.printable_width_mm
@@ -64,6 +96,9 @@ def prepare_print_job(template: Template, profile: ThermalProfile) -> PreparedPr
     finally:
         painter.end()
     preview = monochrome(qimage_to_pil(image), profile)
+    if template.fit_to_content:
+        preview, cut_rows = _fit_content(preview, cut_rows, template.margins_mm, dots_per_mm)
+        height = preview.height
     parts = []
     last = 0
     for row, mode in cut_rows + [(height, profile.cut_mode)]:

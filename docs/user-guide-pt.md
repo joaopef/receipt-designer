@@ -11,6 +11,9 @@ A aplicação começa na biblioteca com os modelos **Diário de bordo** e
 - Use o editor, os painéis de propriedades e as variáveis para alterar os
   elementos. O espaçamento entre letras aceita valores positivos e negativos.
 - **Ctrl+S** guarda na biblioteca. **Biblioteca** regressa à coleção.
+- Ative **FIT ao conteúdo**, junto de Preview, para retirar o branco no topo
+  e no fundo da impressão. O tamanho das letras e a largura não mudam.
+  A opção fica guardada nesse modelo e pode ser desfeita com Ctrl+Z.
 - **Duplicar** cria um modelo independente. Pode mudar o nome e pesquisar.
 - Os modelos movidos para o lixo podem ser recuperados na vista do lixo.
 
@@ -32,6 +35,18 @@ Os modelos de exemplo são instalados uma vez. Editá-los, mudar-lhes o nome
 ou eliminá-los não faz com que sejam substituídos no arranque seguinte.
 
 ## Impressão na AB-88H
+
+Com **FIT ao conteúdo** ativo, a pré-visualização de impressão mostra o
+comprimento ajustado. A página do editor conserva a altura de trabalho, para
+continuar a desenhar; o FIT atua na saída. Respeita as margens superior e
+inferior do modelo e conserva os cortes intermédios, incluindo os que estão
+depois do último texto. Sem tinta visível, pode guardar o rascunho, mas a
+aplicação recusa imprimir uma página vazia em FIT.
+
+O recorte retira branco da imagem. O avanço antes do corte configurado em
+**Config** continua a ser aplicado, e pode existir espaço físico entre a
+cabeça de impressão e a lâmina. O FIT não promete uma borda física de zero
+milímetros. Não reduzir automaticamente esse avanço evita cortar texto.
 
 O perfil de referência usa papel de 80 mm, área imprimível de 72 mm,
 imagem de 576 píxeis e TCP `192.168.1.10:9100`. O endereço é configurável.

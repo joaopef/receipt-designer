@@ -104,3 +104,33 @@ do layout, mantendo a largura reduzida e usando deslocamento vertical.
 Dois testes reproduziram a falha antes da correção, com alturas de 480 e 900.
 Ambos passaram depois; verificam a altura de todos os campos visíveis e o
 acesso aos últimos campos através do scroll. Suite completa: 211 passaram.
+
+## FIT ao conteúdo
+
+Opção por documento (schema 2 aditivo), com guardar/reabrir e Desfazer/Refazer.
+Recorta apenas linhas brancas exteriores do raster final, mantém largura/escala,
+respeita margens verticais e conserva todos os cortes. Um rascunho vazio pode
+ser guardado; o envio FIT sem tinta é recusado.
+
+239 testes passaram na árvore final. A revisão independente comparou o stream
+FIXED com d45718a em 32 cenários e no Cinema: bytes idênticos. No rascunho RAM,
+renderizado com as fontes Windows nativas, a imagem passou de 576x600 para
+576x175 pontos (75 para 21,875 mm), sem mudar as letras.
+
+O .exe v3 arrancou fora da árvore de código, numa biblioteca de teste isolada,
+com o botão FIT visível e o layout de teste carregado. O guia distingue a página
+de trabalho da saída recortada e da margem física do cortador.
+
+A referência ESC/POS Epson GS V documenta a separação entre cabeça e cortador
+e que a margem inicial depende do modelo. Isso explica o tipo de espaço visto
+na fotografia, mas não é uma medição nem um manual da AB-88H:
+https://download4.epson.biz/sec_pubs/pos/reference_en/escpos/gs_cv.html
+Não foram alterados avanço de corte, backfeed nem firmware da impressora.
+
+## Isolamento dos testes
+
+A análise revelou que testes antigos podiam eliminar o autosave do utilizador:
+usavam TempLocation real. A fixture de sessão passou a isolar temporários,
+biblioteca e preferências QSettings, mesmo sem RUN_QT_TESTS. A suite completa
+foi repetida com esse isolamento: 239 passaram em 14,73 s. Foi conservada
+uma cópia local do rascunho existente, sem alterar o documento aberto.

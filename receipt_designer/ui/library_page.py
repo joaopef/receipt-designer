@@ -117,6 +117,26 @@ class LibraryPage(QtWidgets.QWidget):
         self._update_buttons()
 
 
+class FitToContentCommand(QtGui.QUndoCommand):
+    """Apply to the current model, including after Save replaces its snapshot."""
+    def __init__(self, mw, enabled):
+        super().__init__('Ajustar FIT ao conteúdo')
+        self.mw = mw
+        self.before = mw.template.fit_to_content
+        self.after = enabled
+
+    def _apply(self, enabled):
+        self.mw.template.fit_to_content = enabled
+        self.mw._sync_fit_to_content_action()
+        self.mw._mark_unsaved()
+
+    def redo(self):
+        self._apply(self.after)
+
+    def undo(self):
+        self._apply(self.before)
+
+
 def snapshot(mw, *, commit=True):
     """Copy the full model, replacing only the scene-owned elements."""
     if commit and mw._inline_editor.isEditing():
@@ -222,6 +242,7 @@ def install_template(mw, template, layout_id=None, path=None, *, saved=True):
         with QtCore.QSignalBlocker(widget):
             widget.setCurrentText(f'{value:g} mm')
     mw._update_cut_guides()
+    mw._sync_fit_to_content_action()
     if saved:
         set_clean(mw)
     else:
@@ -255,9 +276,17 @@ def open_layout(mw, id):
 def save(mw):
     try:
         template = snapshot(mw)
-        from .print_render import prepare_print_job
+        from .print_render import prepare_print_job, EmptyPrintableContentError
         from ..printing.jobs import ThermalProfile
-        preview = prepare_print_job(template, ThermalProfile.from_config(mw.printer_cfg)).preview
+        profile = ThermalProfile.from_config(mw.printer_cfg)
+        try:
+            preview = prepare_print_job(template, profile).preview
+        except EmptyPrintableContentError:
+            # A blank FIT draft is editable and saveable, even though sending it
+            # to the printer is refused. Only its thumbnail uses the full page.
+            thumbnail_template = copy.deepcopy(template)
+            thumbnail_template.fit_to_content = False
+            preview = prepare_print_job(thumbnail_template, profile).preview
         info = mw.library.save(template, layout_id=mw.current_layout_id, preview=preview)
     except Exception as exc:
         QtWidgets.QMessageBox.critical(mw, 'Não foi possível guardar', str(exc))

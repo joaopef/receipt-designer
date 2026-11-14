@@ -62,6 +62,17 @@ def build_toolbars_and_menus(mw: ActionsHost) -> None:
 
     tb_main.addSeparator()
 
+    mw.action_fit_to_content = QtGui.QAction("FIT ao conteúdo", mw)
+    mw.action_fit_to_content.setCheckable(True)
+    mw.action_fit_to_content.setChecked(mw.template.fit_to_content)
+    mw.action_fit_to_content.setToolTip(
+        "Retira branco no topo e no fundo, mantendo o tamanho do texto.\n"
+        "Conserva os cortes e respeita as margens superior e inferior.\n"
+        "A impressora pode deixar uma margem física junto à lâmina."
+    )
+    mw.action_fit_to_content.toggled.connect(mw._on_fit_to_content_toggled)
+    tb_main.addAction(mw.action_fit_to_content)
+
     act_preview = QtGui.QAction("Preview", mw)
     act_preview.setToolTip("Preview how the receipt will look before printing (Ctrl+Shift+P)")
     act_preview.triggered.connect(mw.preview_print)
@@ -595,7 +606,8 @@ def build_toolbars_and_menus(mw: ActionsHost) -> None:
     # Document shortcuts are inactive while the gallery owns the central page.
     mw._editor_only_actions = [act_save, act_save_menu, act_export_json, act_export_png,
                               act_export_pdf, act_preview, act_print, act_file_preview,
-                              act_file_print, act_feed, act_cut_btn, act_cuts]
+                              act_file_print, act_feed, act_cut_btn, act_cuts,
+                              mw.action_fit_to_content]
     for menu in (edit_menu, insert_menu, layout_menu):
         mw._editor_only_actions.extend(action for action in menu.actions()
                                        if action not in (act_undo, act_redo))

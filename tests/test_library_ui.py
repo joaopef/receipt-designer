@@ -430,3 +430,90 @@ def test_unsaved_document_requires_save_after_queued_repaint(window, qapp, tmp_p
     assert window.save_layout()
     qapp.processEvents()
     assert not persistence.has_unsaved_changes(window)
+
+def test_fit_action_is_document_scoped_undoable_and_tracks_saved_state(window, qapp):
+    from receipt_designer.ui import persistence
+    action = window.action_fit_to_content
+    assert action.text() == 'FIT ao conteúdo'
+    assert action.isCheckable()
+    assert not action.isEnabled()
+    window.new_layout('FIT ligado')
+    assert action.isEnabled()
+    assert not action.isChecked()
+    assert window.save_layout()
+    fitted_id = window.current_layout_id
+    action.trigger()
+    assert window.template.fit_to_content
+    assert action.isChecked()
+    assert persistence.has_unsaved_changes(window)
+    window.undo_stack.undo()
+    assert not window.template.fit_to_content
+    assert not action.isChecked()
+    assert not persistence.has_unsaved_changes(window)
+    window.undo_stack.redo()
+    assert window.template.fit_to_content
+    assert action.isChecked()
+    assert window.save_layout()
+    qapp.processEvents()
+    assert window.library.load(fitted_id).fit_to_content
+    assert not persistence.has_unsaved_changes(window)
+    window.undo_stack.undo()
+    assert not action.isChecked()
+    assert persistence.has_unsaved_changes(window)
+    window.undo_stack.redo()
+    assert action.isChecked()
+    assert not persistence.has_unsaved_changes(window)
+    assert window.new_layout('FIT desligado')
+    assert not action.isChecked()
+    assert not window.template.fit_to_content
+    assert window.save_layout()
+    ordinary_id = window.current_layout_id
+    assert window.show_library()
+    assert not action.isEnabled()
+    assert window.open_layout(fitted_id)
+    assert action.isChecked()
+    assert window.undo_stack.count() == 0
+    assert window.open_layout(ordinary_id)
+    assert not action.isChecked()
+    assert window.undo_stack.count() == 0
+
+
+def test_fit_preview_submits_exact_cropped_prepared_job(window, monkeypatch):
+    from receipt_designer.ui import main_window_impl as main, print_render
+    window.new_layout('FIT prévia')
+    window.add_rect()
+    full_height = window._prepare_print_job().preview.height
+    window.action_fit_to_content.trigger()
+    real = print_render.prepare_print_job
+    prepared, submitted = [], []
+    def prepare(*args):
+        job = real(*args)
+        prepared.append(job)
+        return job
+    monkeypatch.setattr(print_render, 'prepare_print_job', prepare)
+    monkeypatch.setattr(main.PrintPreviewDialog, 'exec', lambda self: QtWidgets.QDialog.Accepted)
+    monkeypatch.setattr(window, '_submit_print_job', submitted.append)
+    window.preview_print()
+    assert len(prepared) == 1
+    assert submitted == prepared
+    assert submitted[0] is prepared[0]
+    assert submitted[0].preview.width == 576
+    assert submitted[0].preview.height < full_height
+
+def test_empty_fit_can_save_draft_but_cannot_submit_print_or_preview(window, monkeypatch):
+    errors, submitted = [], []
+    monkeypatch.setattr(QtWidgets.QMessageBox, 'critical', lambda parent, title, text: errors.append(text))
+    monkeypatch.setattr(window, '_submit_print_job', submitted.append)
+    window.new_layout('Rascunho FIT vazio')
+    window.action_fit_to_content.trigger()
+    assert window.save_layout()
+    saved = window.current_layout_id
+    assert window.library.load(saved).fit_to_content
+    with pytest.raises(ValueError):
+        window._prepare_print_job()
+    window.print_now()
+    window.preview_print()
+    assert len(errors) == 2
+    assert submitted == []
+    assert window.template.fit_to_content
+    assert window.action_fit_to_content.isChecked()

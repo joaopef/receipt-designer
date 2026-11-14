@@ -114,6 +114,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def _snapshot_template(self):
         return _library.snapshot(self)
 
+    def _on_fit_to_content_toggled(self, checked):
+        if checked != self.template.fit_to_content:
+            self.undo_stack.push(_library.FitToContentCommand(self, checked))
+
+    def _sync_fit_to_content_action(self):
+        if hasattr(self, 'action_fit_to_content'):
+            with QtCore.QSignalBlocker(self.action_fit_to_content):
+                self.action_fit_to_content.setChecked(self.template.fit_to_content)
+
     def save_layout(self):
         return _library.save(self)
 
@@ -1680,6 +1689,7 @@ class MainWindow(QtWidgets.QMainWindow):
         We just use it to refresh selection-dependent UI
         (Properties panel + Layers) and repaint the view.
         """
+        self._sync_fit_to_content_action()
         self._on_selection_changed()
         if hasattr(self, "view") and self.view is not None:
             self.view.viewport().update()
