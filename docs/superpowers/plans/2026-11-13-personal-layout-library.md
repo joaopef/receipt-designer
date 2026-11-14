@@ -27,35 +27,35 @@ UI agent owns ui/library_page.py; main_window_impl.py, actions.py, persistence.p
 Root owns ui/items.py and ui/properties.py typography paint/cache/property control, personal templates and tests, packaging/docs/baseline. Coordinate with printing agent's model addition.
 
 ### Task 1: Runtime baseline and fork
-- [ ] Create fork joaopef/receipt-designer; isolated fresh clone and feat/personal-layout-library branch.
-- [ ] Install venv, run upstream tests with RUN_QT_TESTS=1 QT_QPA_PLATFORM=offscreen, record failures and fix blockers with regression tests.
-- [ ] Lock validated dependencies, read repository instructions, record adjusted interfaces after runtime inspection.
+- [x] Create fork joaopef/receipt-designer; isolated fresh clone and feat/personal-layout-library branch.
+- [x] Install venv, run upstream tests with RUN_QT_TESTS=1 QT_QPA_PLATFORM=offscreen, record failures and fix blockers with regression tests.
+- [x] Lock validated dependencies, read repository instructions, record adjusted interfaces after runtime inspection.
 
 ### Task 2: Library first usable feature
-- [ ] Write failing tests covering roundtrip, portable/missing assets, duplicate independence, search unicode, atomic failure, trash/restore.
-- [ ] Implement minimal repository and library UI alongside existing editor.
-- [ ] UI tests cover save/open/new/rename/duplicate/search and unsaved save/discard/cancel. Run existing suite.
+- [x] Write failing tests covering roundtrip, portable/missing assets, duplicate independence, search unicode, atomic failure, trash/restore.
+- [x] Implement minimal repository and library UI alongside existing editor.
+- [x] UI tests cover save/open/new/rename/duplicate/search and unsaved save/discard/cancel. Run existing suite.
 
 ### Task 3: Compatible documents, typography, common raster preparation
-- [ ] Tests RED: old JSON, cuts roundtrip/invalid/colliding, letter spacing positive/negative; rendering hides guide/selection; output width576, cuts retain all rows.
-- [ ] Implement models and render preparation, font-spacing rendering and cache invalidation, property control.
-- [ ] Tests GREEN plus existing suite. Reuse current drawing primitives; no duplicate editor renderer.
+- [x] Tests RED: old JSON, cuts roundtrip/invalid/colliding, letter spacing positive/negative; rendering hides guide/selection; output width576, cuts retain all rows.
+- [x] Implement models and render preparation, font-spacing rendering and cache invalidation, property control.
+- [x] Tests GREEN plus existing suite. Reuse current drawing primitives; no duplicate editor renderer.
 
 ### Task 4: Network jobs and early physical integration
-- [ ] RED/GREEN byte decoding tests of GS v 0 row widths/polarity and per-part cut ordering; real local TCP server tests, interruption gives uncertain and no resend.
-- [ ] Stream bands <=48 rows, preserve validated ESC d4 + GS V0 cut; backend optional Windows source/interface (not default).
-- [ ] Add cut positions dialog and prepare-once preview/print UI. Ensure no guide/cut marker ink.
-- [ ] Early physical short text/2px line/intermediate-cut test when printer ready and user explicitly authorizes; independent UI/build work continues if unavailable. No silent physical tests.
+- [x] RED/GREEN byte decoding tests of GS v 0 row widths/polarity and per-part cut ordering; real local TCP server tests, interruption gives uncertain and no resend.
+- [x] Stream bands <=48 rows, preserve validated ESC d4 + GS V0 cut; backend optional Windows source/interface (not default).
+- [x] Add cut positions dialog and prepare-once preview/print UI. Ensure no guide/cut marker ink.
+- [x] Early physical short text/2px line/intermediate-cut test when printer ready and user explicitly authorizes; independent UI/build work continues if unavailable. No silent physical tests.
 
 ### Task 5: Editable personal models
-- [ ] Build native JSON daily/cinema based on approved v2 sources; Courier New/Arial Black and explicit letter_spacing_px.
-- [ ] Tests verify editable title/tasks/film, 64 chess squares and valid board, cinema intermediate cut, packaged asset paths.
-- [ ] Render inspect outputs, retain fictional data. APIs and dynamic chess generation deferred.
+- [x] Build native JSON daily/cinema based on approved v2 sources; Courier New/Arial Black and explicit letter_spacing_px.
+- [x] Tests verify editable title/tasks/film, 64 chess squares and valid board, cinema intermediate cut, packaged asset paths.
+- [x] Render inspect outputs, retain fictional data. APIs and dynamic chess generation deferred.
 
 ### Task 6: Review and executable
-- [ ] Full tests, fresh reviewer of modules and whole branch; fix functional findings with regression tests.
-- [ ] PyInstaller onefile build; test frozen program create/edit/save/reopen outside code tree.
-- [ ] Deliver .exe plus source/fork branch, updated plan and evidence. Physical daily/cinema final check when authorized. Do not claim unperformed checks.
+- [x] Full tests, fresh reviewer of modules and whole branch; fix functional findings with regression tests.
+- [x] PyInstaller onefile build; test frozen program create/edit/save/reopen outside code tree.
+- [x] Deliver .exe plus source/fork branch, updated plan and evidence. Physical daily/cinema final check when authorized. Do not claim unperformed checks.
 
 ## Review Focus
 Legacy documents and missing fields; portable image path handling; invalid/duplicate cuts; network partial writes and uncertain status; unsaved navigation and wrong-document overwrites. Every relevant task has regression tests. Preserve license, existing user data, and source repo.
