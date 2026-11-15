@@ -1,6 +1,6 @@
 # Biblioteca pessoal de talões
 
-Abra `ReceiptDesigner-Pessoal-v5.exe`. Não é necessário instalar Python.
+Abra `ReceiptDesigner-Pessoal-v6.exe`. Não é necessário instalar Python.
 A aplicação começa na biblioteca com os modelos **Diário de bordo** e
 **Cinema no sofá**. Os conteúdos desses exemplos são fictícios.
 
@@ -41,6 +41,8 @@ ou eliminá-los não faz com que sejam substituídos no arranque seguinte.
 A v5 reúne o FIT, os estilos e texto branco da v4 e a correção da renomeação
 quando uma cópia temporária tem o atributo Windows «só de leitura». A coleção
 de 18 ideias fica na biblioteca, fora do executável, e continua editável.
+A v6 mantém estas alterações e trata diretórios temporários «só de leitura»
+no fecho do executável, para que o empacotador consiga limpar a extração.
 
 ## Impressão na AB-88H
 

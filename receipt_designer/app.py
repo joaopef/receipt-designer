@@ -4,6 +4,7 @@ from pathlib import Path
 from PySide6 import QtGui
 from PySide6.QtWidgets import QApplication
 from .ui.main_window import MainWindow
+from .frozen_cleanup import register_extraction_cleanup
 
 
 def _get_base_path() -> Path:
@@ -60,6 +61,7 @@ def _load_app_icon() -> QtGui.QIcon:
     return QtGui.QIcon()
 
 def main():
+    register_extraction_cleanup()
     app = QApplication(sys.argv)
 
     icon = _load_app_icon()

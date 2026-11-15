@@ -159,3 +159,26 @@ Após criar uma cópia local da biblioteca, a gravação foi validada nos dois
 modelos originais usando o próprio nome atual: 001Diário de bordo e Cinema
 no sofá. Todos os campos e recursos foram comparados antes/depois; intactos.
 Restaram zero cópias temporárias de substituição. Nenhuma impressão física.
+
+## Limpeza da extração onefile — v6
+
+O aviso ao fechar a v5 referia a pasta de QA v5-qa-temp/_MEI00006a882.
+Restavam 26 diretórios, todos só de leitura, e zero ficheiros. A tentativa
+de remover um diretório vazio reproduziu WinError5; remover o atributo
+permitiu limpar a árvore. A biblioteca não pertencia a essa extração.
+
+A v6 regista um callback de saída só em Windows/frozen/onefile. Limpa apenas
+o atributo ReadOnly de diretórios dentro do próprio sys._MEIPASS, sem
+apagar ficheiros, alterar ACLs ou percorrer ligações. O bootloader conserva
+a responsabilidade de remover a extração quando o processo Python termina.
+
+Testes unitários: 3 passaram, 1 ignorado porque esta sessão Windows não
+permite criar symlinks. Suite completa: 293 passaram, 1 ignorado em 36,17 s.
+Um probe onefile separado criou 3 diretórios ReadOnly, fechou com código 0 e
+o bootloader removeu toda a extração, sem aviso nem restos. Este é um ensaio
+real do fecho empacotado; não é uma nova verificação visual da interface.
+
+Referência do comportamento de limpeza no bootloader 6.22.3:
+https://github.com/pyinstaller/pyinstaller/blob/v6.22.3/bootloader/src/pyi_utils_win32.c
+A extração vazia da v5 indicada no aviso foi removida após verificar caminho,
+ausência de ficheiros e ausência de ligações. Nenhuma impressão física.
