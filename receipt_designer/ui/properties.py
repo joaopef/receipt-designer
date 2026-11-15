@@ -231,6 +231,14 @@ class PropertiesPanel(QtWidgets.QWidget):
         font_style_row.addStretch(1)
         font_layout.addRow("", font_style_row)
 
+        # Thermal output is monochrome: black, or white to print over a black box.
+        self.combo_text_color = QtWidgets.QComboBox()
+        self.combo_text_color.setObjectName("textColor")
+        self.combo_text_color.addItem("Preto", "")
+        self.combo_text_color.addItem("Branco (sobre fundo preto)", "#ffffff")
+        self.combo_text_color.currentIndexChanged.connect(self._on_text_color_changed)
+        font_layout.addRow("Cor do texto:", self.combo_text_color)
+
         layout.addWidget(self.grp_font)
 
         # --- Alignment ---
@@ -642,6 +650,7 @@ class PropertiesPanel(QtWidgets.QWidget):
                     self.font_combo.setCurrentFont(f)
                     self.spin_font_size.setValue(font_pt)
                     self.spin_letter_spacing.setValue(float(getattr(elem, "letter_spacing_px", 0)))
+                    self._show_text_color(getattr(elem, "text_color", "") or "")
                     self.chk_bold.setChecked(bold)
                     self.chk_italic.setChecked(italic)
 
@@ -1282,6 +1291,21 @@ class PropertiesPanel(QtWidgets.QWidget):
     def _on_letter_spacing_changed(self, value: float):
         if not self._updating_ui and self._mode == "text" and self._current_elem is not None:
             self._push_elem_property("letter_spacing_px", float(value), "Alterar espaçamento")
+
+    def _show_text_color(self, color: str):
+        """Select the stored colour, keeping colours from older files visible."""
+        color = color.lower()
+        index = self.combo_text_color.findData(color)
+        if index < 0:
+            self.combo_text_color.addItem(f"Personalizada ({color})", color)
+            index = self.combo_text_color.count() - 1
+        self.combo_text_color.setCurrentIndex(index)
+
+    def _on_text_color_changed(self, index: int):
+        if self._updating_ui or self._mode != "text" or self._current_elem is None:
+            return
+        self._push_elem_property("text_color", self.combo_text_color.itemData(index) or "",
+                                 "Alterar cor do texto")
 
     def _on_bold_toggled(self, checked: bool):
         if self._updating_ui or self._mode != "text":

@@ -638,6 +638,7 @@ class GItem(ContextMenuMixin, QtWidgets.QGraphicsRectItem):
             bool(getattr(self.elem, "bold", False)),
             bool(getattr(self.elem, "italic", False)),
             float(getattr(self.elem, "letter_spacing_px", 0.0)),
+            getattr(self.elem, "text_color", "") or "",
             getattr(self.elem, "h_align", "left"),
             getattr(self.elem, "v_align", "top"),
             getattr(self.elem, "wrap_mode", "word"),
@@ -1014,6 +1015,41 @@ class GItem(ContextMenuMixin, QtWidgets.QGraphicsRectItem):
         return super().itemChange(change, value)
 
 
+LINE_STYLES = ("solid", "dashed", "dotted", "dashdot", "perforation")
+_PERFORATION_PATTERN = [2.0, 4.0]  # in pen widths, as offered by the properties panel
+
+
+def apply_line_style(pen: QtGui.QPen, style: str) -> None:
+    """Set a QPen's dash style from the document's ``line_style`` name."""
+    style = (style or "solid").lower()
+    if style == "perforation":
+        pen.setStyle(QtCore.Qt.CustomDashLine)
+        pen.setDashPattern(_PERFORATION_PATTERN)
+        return
+    pen.setStyle({
+        "dashed": QtCore.Qt.DashLine,
+        "dotted": QtCore.Qt.DotLine,
+        "dashdot": QtCore.Qt.DashDotLine,
+    }.get(style, QtCore.Qt.SolidLine))
+
+
+def line_style_of(pen: QtGui.QPen) -> str:
+    """Inverse of :func:`apply_line_style`; unknown Qt styles serialize as solid."""
+    return {
+        QtCore.Qt.DashLine: "dashed",
+        QtCore.Qt.DotLine: "dotted",
+        QtCore.Qt.DashDotLine: "dashdot",
+        QtCore.Qt.CustomDashLine: "perforation",
+    }.get(pen.style(), "solid")
+
+
+def _styled_pen(elem: Element) -> QtGui.QPen:
+    pen = QtGui.QPen(QtGui.QColor(elem.stroke_color or "#000000"))
+    pen.setWidthF(elem.stroke_px if elem.stroke_px > 0 else 1.0)
+    apply_line_style(pen, getattr(elem, "line_style", "solid"))
+    return pen
+
+
 class GLineItem(ContextMenuMixin, QtWidgets.QGraphicsLineItem):
     """
     Movable + resizable line with:
@@ -1265,6 +1301,7 @@ class GLineItem(ContextMenuMixin, QtWidgets.QGraphicsLineItem):
             h=y2 - y1,  # Store delta as h for reconstruction
             stroke_color=stroke_color,
             stroke_px=stroke_px,
+            line_style=line_style_of(pen),
             z=int(self.zValue()),
             visible=self.isVisible(),
         )
@@ -1542,6 +1579,7 @@ class BaseShapeItem(ContextMenuMixin, QtWidgets.QGraphicsRectItem):
             h=r.height(),
             stroke_color=stroke_color,
             stroke_px=stroke_px,
+            line_style=line_style_of(pen),
             fill_color=fill_color,
             z=int(self.zValue()),
             visible=self.isVisible(),
@@ -1699,6 +1737,7 @@ class GRectItem(ContextMenuMixin, QtWidgets.QGraphicsRectItem):
             h=r.height(),
             stroke_color=stroke_color,
             stroke_px=stroke_px,
+            line_style=line_style_of(pen),
             fill_color=fill_color,
             corner_radius_px=self.corner_radius_px,
             z=int(self.zValue()),
@@ -1901,6 +1940,7 @@ class GStarItem(ContextMenuMixin, QtWidgets.QGraphicsRectItem):
             h=r.height(),
             stroke_color=stroke_color,
             stroke_px=stroke_px,
+            line_style=line_style_of(pen),
             fill_color=fill_color,
             z=int(self.zValue()),
             visible=self.isVisible(),
@@ -2012,9 +2052,7 @@ def _create_item_from_element(elem: Element):
         item.setPos(elem.x, elem.y)
 
         # Apply style
-        pen = QtGui.QPen(QtGui.QColor(elem.stroke_color or "#000000"))
-        pen.setWidthF(elem.stroke_px if elem.stroke_px > 0 else 1.0)
-        item.setPen(pen)
+        item.setPen(_styled_pen(elem))
         item.setZValue(elem.z)
         item.setVisible(elem.visible)
         return item
@@ -2027,9 +2065,7 @@ def _create_item_from_element(elem: Element):
         item.setPos(elem.x, elem.y)
 
         # Apply style
-        pen = QtGui.QPen(QtGui.QColor(elem.stroke_color or "#000000"))
-        pen.setWidthF(elem.stroke_px if elem.stroke_px > 0 else 1.0)
-        item.setPen(pen)
+        item.setPen(_styled_pen(elem))
         item.setZValue(elem.z)
         item.setVisible(elem.visible)
 
@@ -2046,9 +2082,7 @@ def _create_item_from_element(elem: Element):
         item.setPos(elem.x, elem.y)
 
         # Apply style
-        pen = QtGui.QPen(QtGui.QColor(elem.stroke_color or "#000000"))
-        pen.setWidthF(elem.stroke_px if elem.stroke_px > 0 else 1.0)
-        item.setPen(pen)
+        item.setPen(_styled_pen(elem))
 
         if elem.fill_color:
             item.setBrush(QtGui.QBrush(QtGui.QColor(elem.fill_color)))
@@ -2067,9 +2101,7 @@ def _create_item_from_element(elem: Element):
         item.setPos(elem.x, elem.y)
 
         # Apply style
-        pen = QtGui.QPen(QtGui.QColor(elem.stroke_color or "#000000"))
-        pen.setWidthF(elem.stroke_px if elem.stroke_px > 0 else 1.0)
-        item.setPen(pen)
+        item.setPen(_styled_pen(elem))
 
         if elem.fill_color:
             item.setBrush(QtGui.QBrush(QtGui.QColor(elem.fill_color)))
@@ -2087,9 +2119,7 @@ def _create_item_from_element(elem: Element):
         item.setPos(elem.x, elem.y)
 
         # Apply style
-        pen = QtGui.QPen(QtGui.QColor(elem.stroke_color or "#000000"))
-        pen.setWidthF(elem.stroke_px if elem.stroke_px > 0 else 1.0)
-        item.setPen(pen)
+        item.setPen(_styled_pen(elem))
 
         if elem.fill_color:
             item.setBrush(QtGui.QBrush(QtGui.QColor(elem.fill_color)))
@@ -2106,9 +2136,7 @@ def _create_item_from_element(elem: Element):
         item.setPos(elem.x, elem.y)
 
         # Apply style
-        pen = QtGui.QPen(QtGui.QColor(elem.stroke_color or "#000000"))
-        pen.setWidthF(elem.stroke_px if elem.stroke_px > 0 else 1.0)
-        item.setPen(pen)
+        item.setPen(_styled_pen(elem))
 
         if elem.fill_color:
             item.setBrush(QtGui.QBrush(QtGui.QColor(elem.fill_color)))

@@ -30,6 +30,7 @@ class Element:
     shrink_to_fit: bool = False
     max_lines: int = 0              # 0 = unlimited
     baseline_px: int = 0            # 0 = off
+    text_color: str = ""            # "" = black; e.g. "#ffffff" for text on a black box
 
     # image props
     image_path: str = ""
@@ -46,6 +47,7 @@ class Element:
     corner_radius_px: float = 0.0
     fill_color: str = "#000000"
     stroke_color: str = "#000000"
+    line_style: str = "solid"       # solid|dashed|dotted|dashdot|perforation
 
     # misc
     visible: bool = True
