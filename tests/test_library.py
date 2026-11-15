@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
+import sys
 from uuid import UUID
 
 import pytest
@@ -326,3 +328,165 @@ def test_delete_save_undo_keeps_owned_image_and_portability(repository, tmp_path
     assert moved_asset.read_bytes() == saved_bytes
     moved.save(moved_template, layout_id=info.id)
     assert Path(moved.load(info.id).elements[0].image_path) == moved_asset
+
+
+def make_windows_readonly(path):
+    os.chmod(path, stat.S_IREAD)
+    assert path.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ReadOnly attributes")
+def test_rename_with_readonly_owned_asset_directory_and_file(repository, tmp_path):
+    info = repository.save(image_template(tmp_path, "Original"))
+    asset = Path(repository.load(info.id).elements[0].image_path)
+    original_bytes = asset.read_bytes()
+    make_windows_readonly(asset)
+    make_windows_readonly(info.folder / "assets")
+    renamed = repository.rename(info.id, "Renamed successfully")
+    assert renamed.id == info.id
+    assert renamed.name == "Renamed successfully"
+    assert repository.load(info.id).name == "Renamed successfully"
+    assert asset.read_bytes() == original_bytes
+    assert not list(repository.root.glob(".backup-*"))
+    assert not list(repository.root.glob(".staging-*"))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ReadOnly attributes")
+def test_readonly_failed_stage_is_cleaned_without_masking_serialization_error(repository, tmp_path):
+    info = repository.save(image_template(tmp_path, "Original"))
+    original = (info.folder / "document.json").read_bytes()
+    asset = Path(repository.load(info.id).elements[0].image_path)
+    make_windows_readonly(asset)
+    template = repository.load(info.id)
+    template.elements.append(Element("text", 0, 0, 10, 10, data={"unsupported": object()}))
+    with pytest.raises(TypeError):
+        repository.save(template, layout_id=info.id)
+    assert (info.folder / "document.json").read_bytes() == original
+    assert asset.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY
+    assert not list(repository.root.glob(".staging-*"))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ReadOnly attributes")
+def test_recovery_removes_readonly_backup_without_changing_current_assets(repository, tmp_path):
+    info = repository.save(image_template(tmp_path, "Current"))
+    asset = Path(repository.load(info.id).elements[0].image_path)
+    backup = repository.root / f".backup-{info.id}-{'c' * 32}"
+    shutil.copytree(info.folder, backup)
+    for path in (backup, backup / "assets", backup / "assets" / asset.name):
+        make_windows_readonly(path)
+    from receipt_designer.library import LibraryRepository
+    reopened = LibraryRepository(repository.root)
+    assert reopened.load(info.id).name == "Current"
+    assert asset.exists()
+    assert not backup.exists()
+
+
+def test_postpublish_cleanup_failure_returns_committed_layout_then_recovers(repository, tmp_path, monkeypatch):
+    info = repository.save(image_template(tmp_path, "Original"))
+    rmtree = shutil.rmtree
+
+    def blocked_cleanup(path, *args, **kwargs):
+        if Path(path).name.startswith(".backup-"):
+            # An interrupted cleanup can already have removed transaction
+            # metadata before another file/handle prevents completion.
+            (Path(path) / "metadata.json").unlink()
+            raise PermissionError("backup temporarily locked")
+        return rmtree(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(shutil, "rmtree", blocked_cleanup)
+        renamed = repository.rename(info.id, "Committed")
+    assert renamed.id == info.id
+    assert renamed.name == "Committed"
+    assert repository.load(info.id).name == "Committed"
+    backups = list(repository.root.glob(".backup-*"))
+    assert len(backups) == 1
+    from receipt_designer.library import LibraryRepository
+    reopened = LibraryRepository(repository.root)
+    assert reopened.load(info.id).name == "Committed"
+    assert not backups[0].exists()
+
+
+@pytest.mark.parametrize("failure", [PermissionError, OSError])
+def test_cleanup_does_not_retry_other_permission_or_storage_errors(repository, monkeypatch, failure):
+    stage = repository.root / ".staging-cleanup-check"
+    stage.mkdir()
+    resource = stage / "untouched.txt"
+    resource.write_text("Keep this file", encoding="utf-8")
+
+    def denied_rmtree(path, *, onexc=None, onerror=None):
+        error = failure("not a ReadOnly failure")
+        if onexc:
+            onexc(os.unlink, str(resource), error)
+        else:
+            onerror(os.unlink, str(resource), (failure, error, None))
+
+    monkeypatch.setattr(shutil, "rmtree", denied_rmtree)
+    with pytest.raises(failure, match="not a ReadOnly failure"):
+        repository._remove_managed_tree(stage)
+    assert resource.read_text(encoding="utf-8") == "Keep this file"
+
+
+def test_cleanup_rejects_outside_or_active_layout_folders(repository, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("Untouched", encoding="utf-8")
+    info = repository.save(Template(name="Current"))
+    for folder in (outside, info.folder):
+        with pytest.raises(ValueError, match="managed transaction"):
+            repository._remove_managed_tree(folder)
+    assert (outside / "keep.txt").read_text(encoding="utf-8") == "Untouched"
+    assert repository.load(info.id).name == "Current"
+
+
+@pytest.mark.parametrize("document", ["{broken json", '{"schema_version": 999}',
+                                     '[]', '{"elements": [null]}'])
+def test_recovery_preserves_partial_backup_when_published_document_is_invalid(repository, document):
+    info = repository.save(Template(name="Current"))
+    backup = repository.root / f".backup-{info.id}-{'d' * 32}"
+    shutil.copytree(info.folder, backup)
+    (backup / "metadata.json").unlink()
+    old_document = (backup / "document.json").read_bytes()
+    (info.folder / "document.json").write_text(document, encoding="utf-8")
+    from receipt_designer.library import LibraryRepository
+    LibraryRepository(repository.root)
+    assert (backup / "document.json").read_bytes() == old_document
+    assert (info.folder / "document.json").read_text(encoding="utf-8") == document
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows ReadOnly attributes")
+def test_cleanup_supports_python310_rmtree_error_callback(repository, monkeypatch):
+    stage = repository.root / ".staging-python310"
+    stage.mkdir()
+    resource = stage / "readonly.txt"
+    resource.write_text("Temporary transaction", encoding="utf-8")
+    make_windows_readonly(resource)
+    rmtree = shutil.rmtree
+
+    def legacy_rmtree(path, *, onerror):
+        return rmtree(path, onerror=onerror)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "version_info", (3, 10, 0))
+        patch.setattr(shutil, "rmtree", legacy_rmtree)
+        repository._remove_managed_tree(stage)
+    assert not stage.exists()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows ReadOnly attributes')
+def test_cleanup_never_changes_readonly_hardlink_outside_transaction(repository, tmp_path):
+    original = tmp_path / 'outside-transaction.txt'
+    original.write_text('Preserve outside attributes', encoding='utf-8')
+    stage = repository.root / '.staging-hardlink'
+    stage.mkdir()
+    alias = stage / 'linked.txt'
+    os.link(original, alias)
+    make_windows_readonly(original)
+    try:
+        with pytest.raises(PermissionError):
+            repository._remove_managed_tree(stage)
+        assert original.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY
+        assert alias.exists()
+        assert original.read_text(encoding='utf-8') == 'Preserve outside attributes'
+    finally:
+        os.chmod(original, stat.S_IWRITE)

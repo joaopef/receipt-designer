@@ -15,6 +15,8 @@ import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
+import stat
+import sys
 import tempfile
 import unicodedata
 from uuid import UUID, uuid4
@@ -72,6 +74,39 @@ class LibraryRepository:
         self.root.mkdir(parents=True, exist_ok=True)
         self._recover_replacements()
 
+    def _remove_managed_tree(self, folder: Path) -> None:
+        """Remove a transaction tree, retrying Windows ReadOnly failures only.
+
+        Never change ACLs or follow a resource outside the transaction folder.
+        Other permission/storage failures remain errors for the caller to handle.
+        """
+        folder = Path(folder)
+        managed_name = folder.name.startswith(".staging-") or re.fullmatch(
+            r"\.backup-[0-9a-f-]{36}-[0-9a-f]{32}", folder.name)
+        if folder.parent != self.root or not managed_name or folder.resolve() != folder:
+            raise ValueError("Cleanup requires a managed transaction folder inside the library")
+
+        def retry_readonly(function, path, error):
+            target = Path(path)
+            if (not isinstance(error, PermissionError) or os.name != "nt"
+                    or target.resolve() != target or not target.is_relative_to(folder)):
+                raise error
+            target_stat = target.stat(follow_symlinks=False)
+            if (stat.S_ISREG(target_stat.st_mode) and target_stat.st_nlink > 1
+                    or not target_stat.st_file_attributes & stat.FILE_ATTRIBUTE_READONLY):
+                raise error
+            # On Windows chmod's writable bit clears ReadOnly; it does not edit
+            # ACL permissions or alter unrelated Windows file attributes.
+            os.chmod(target, stat.S_IWRITE)
+            function(path)
+
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(folder, onexc=retry_readonly)
+        else:
+            def onerror(function, path, exc_info):
+                retry_readonly(function, path, exc_info[1])
+            shutil.rmtree(folder, onerror=onerror)
+
     def _recover_replacements(self) -> None:
         # A process can stop between the two directory renames on Windows.
         # Only touch our complete, identifiable transaction backups.
@@ -81,6 +116,13 @@ class LibraryRepository:
                 continue
             try:
                 destination = self._folder(match.group(1))
+                if destination.exists():
+                    # A prior cleanup may have removed backup metadata before
+                    # encountering a locked file. A valid published document is
+                    # authoritative, even when its obsolete backup is incomplete.
+                    self.load(destination.name)
+                    self._remove_managed_tree(backup)
+                    continue
                 with (backup / "metadata.json").open(encoding="utf-8") as stream:
                     metadata = json.load(stream)
                 with (backup / "document.json").open(encoding="utf-8") as stream:
@@ -88,13 +130,7 @@ class LibraryRepository:
                 if (not isinstance(metadata, dict) or metadata.get("id") != destination.name
                         or not isinstance(document, dict)):
                     continue
-                if destination.exists():
-                    # Leave any backup intact if the published document is
-                    # damaged, so recovery never destroys the last valid copy.
-                    self.load(destination.name)
-                    shutil.rmtree(backup)
-                else:
-                    os.replace(backup, destination)
+                os.replace(backup, destination)
             except (ValueError, OSError, KeyError, TypeError):
                 continue
 
@@ -176,7 +212,12 @@ class LibraryRepository:
         self._metadata(folder)
         with (folder / "document.json").open(encoding="utf-8") as stream:
             data = json.load(stream)
-        for element in data.get("elements", []):
+        if not isinstance(data, dict):
+            raise ValueError("Layout document must be a JSON object")
+        elements = data.get("elements", [])
+        if not isinstance(elements, list) or not all(isinstance(element, dict) for element in elements):
+            raise ValueError("Layout elements must be JSON objects")
+        for element in elements:
             if element.get("kind") == "image" and element.get("image_path"):
                 element["image_path"] = str(self._relative_resource(element["image_path"], folder))
         return Template.from_dict(data)
@@ -256,9 +297,14 @@ class LibraryRepository:
                 raise
         finally:
             if stage.exists():
-                shutil.rmtree(stage)
+                self._remove_managed_tree(stage)
         if backup.exists():
-            shutil.rmtree(backup)
+            try:
+                self._remove_managed_tree(backup)
+            except OSError:
+                # Publishing has committed. Report the saved document correctly;
+                # a locked obsolete backup can be cleaned on the next opening.
+                pass
         return self._info(destination)
 
     def duplicate(self, layout_id: str, new_name: str) -> LayoutInfo:

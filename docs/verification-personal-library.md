@@ -134,3 +134,28 @@ usavam TempLocation real. A fixture de sessão passou a isolar temporários,
 biblioteca e preferências QSettings, mesmo sem RUN_QT_TESTS. A suite completa
 foi repetida com esse isolamento: 239 passaram em 14,73 s. Foi conservada
 uma cópia local do rascunho existente, sem alterar o documento aberto.
+
+## Versão conjunta v5 — 15 de novembro de 2026
+
+Integrado por fast-forward o commit 57302a9 do Opus, conservando o autor e o
+histórico. A cópia work/receipt-designer-estilos ficou intacta e o executável
+v4 mantém SHA256 73AD156A01848B88620222130B3273A8971BCB77B0BB2D37CA6C3713A43A21A2.
+A v5 mantém linhas tracejadas e texto branco, FIT e os 18 modelos da coleção.
+
+A renomeação podia publicar corretamente o novo documento e falhar apenas na
+limpeza de assets ReadOnly da cópia antiga. A limpeza agora trata ReadOnly
+Windows somente dentro das transações da biblioteca, sem mudar ACLs, seguir
+links ou alterar atributos de ficheiros com ligações físicas fora da transação.
+Outras falhas de limpeza depois da publicação conservam a cópia para nova
+tentativa, sem reportar que a gravação já concluída falhou. A recuperação não
+apaga a cópia antiga se o documento publicado estiver inválido.
+
+Regressões novas reproduzidas antes de corrigir: atributos ReadOnly, limpeza
+parcial, JSON estruturalmente inválido e proteção de ligações físicas. Suporte
+ao callback de Python 3.10/3.11 mantido. Suite conjunta: 290 testes passaram
+em 96,05 s, incluindo os 30 testes de estilos/cor do Opus e os 18 modelos.
+
+Após criar uma cópia local da biblioteca, a gravação foi validada nos dois
+modelos originais usando o próprio nome atual: 001Diário de bordo e Cinema
+no sofá. Todos os campos e recursos foram comparados antes/depois; intactos.
+Restaram zero cópias temporárias de substituição. Nenhuma impressão física.

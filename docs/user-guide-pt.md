@@ -1,6 +1,6 @@
 # Biblioteca pessoal de talões
 
-Abra `ReceiptDesigner-Pessoal.exe`. Não é necessário instalar Python.
+Abra `ReceiptDesigner-Pessoal-v5.exe`. Não é necessário instalar Python.
 A aplicação começa na biblioteca com os modelos **Diário de bordo** e
 **Cinema no sofá**. Os conteúdos desses exemplos são fictícios.
 
@@ -10,6 +10,10 @@ A aplicação começa na biblioteca com os modelos **Diário de bordo** e
 - Use **Novo modelo** para começar outro desenho.
 - Use o editor, os painéis de propriedades e as variáveis para alterar os
   elementos. O espaçamento entre letras aceita valores positivos e negativos.
+- Em **Font / Cor do texto**, escolha Preto ou Branco. Para texto branco,
+  coloque uma forma preta atrás do texto.
+- Os estilos Dashed, Dotted, Dash-dot e Perforation das linhas e formas
+  são conservados ao guardar, reabrir e imprimir.
 - **Ctrl+S** guarda na biblioteca. **Biblioteca** regressa à coleção.
 - Ative **FIT ao conteúdo**, junto de Preview, para retirar o branco no topo
   e no fundo da impressão. O tamanho das letras e a largura não mudam.
@@ -33,6 +37,10 @@ As imagens usadas por um layout são copiadas para a biblioteca ao guardar.
 
 Os modelos de exemplo são instalados uma vez. Editá-los, mudar-lhes o nome
 ou eliminá-los não faz com que sejam substituídos no arranque seguinte.
+
+A v5 reúne o FIT, os estilos e texto branco da v4 e a correção da renomeação
+quando uma cópia temporária tem o atributo Windows «só de leitura». A coleção
+de 18 ideias fica na biblioteca, fora do executável, e continua editável.
 
 ## Impressão na AB-88H
 
